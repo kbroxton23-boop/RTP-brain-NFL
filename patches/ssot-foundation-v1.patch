@@ -1,0 +1,91 @@
+--- a/brain-elite-v8.js
++++ b/brain-elite-v8.js
+@@ -45,7 +45,7 @@
+ 
+ 
+ 
+-const BUILD = "elite-v8-p12f";
++const BUILD = "elite-v8-p12f-ssot-foundation-v1";
+ const CALFIT_VERSION = "elite-v8-p12f-calfit-prod3-v23-totalsec";
+ // ========= Calibration =========
+ const CAL_DEFAULTS = {
+@@ -101,17 +101,9 @@
+ 
+ 
+ function defaultTeamStats() {
+-  // Injury total (for UI/model): prefer net_penalty/off+def penalty from payload; else derive from computed injury_penalty.
+-  let inj_total = num(
+-    g('injury_impact.net_penalty') ??
+-    g('injury_impact.offense_penalty') ??
+-    g('injury_impact.defense_penalty') ??
+-    undefined
+-  , NaN);
+-  if (!Number.isFinite(inj_total)) inj_total = Math.abs(num(injury_penalty, 0));
+-  // keep as positive magnitude
+-  inj_total = Math.abs(inj_total);
+-
++  // Pure defaults only. Payload-specific injury values are applied later by the
++  // injury merge / matchup-input paths; referencing request-scoped helpers here
++  // makes cold/default construction non-deterministic and can throw.
+   return {
+     pace_plays60: 62.0000,
+     pass_rate: 0.58000,
+@@ -880,19 +872,22 @@
+       }
+     }
+ 
++    // Long Sumer rows do not carry the dotted wide-row payload shape. Start
++    // from the same canonical default stats object and preserve raw containers
++    // as empty objects so downstream feature/split readers have stable types.
++    const stats = initStats;
++    const raw_dotted = {};
++    const raw_nested = {};
++
+     teams[team] = {
+       season: Number(r.season) || seasonDefault,
+       week: r.week ? Number(r.week) : weekDefault,
+       team,
+       stats,
+-      // Preserve raw dotted/nested so modifiers & feature registry (including splits.*) can function end-to-end.
+       raw_dotted,
+       raw_nested,
+-      // Convenience accessors for splits (if present)
+-      splits: (raw_nested && typeof raw_nested === "object") ? (raw_nested.splits || null) : null,
+-      splits_meta: {
+-        groups: (raw_nested && raw_nested.splits && typeof raw_nested.splits === "object") ? Object.keys(raw_nested.splits) : []
+-      },
++      splits: null,
++      splits_meta: { groups: [] },
+       audit: {
+         missing_core: CORE_KEYS.filter(k => stats[k] == null),
+         missing_patch: []
+@@ -901,7 +896,7 @@
+     };
+   }
+ 
+-const stats = teams[team].stats;
++    const stats = teams[team].stats;
+ 
+     // ----- alias routing -----
+ 
+@@ -1406,7 +1401,7 @@
+ }
+ 
+ // ========= Team stats (Team Well) =========
+-const TEAM_STATS_TTL = 7 * 24 * 3600;
++const TEAM_STATS_TTL = null; // SSOT history is durable; only true caches should expire.
+ const MATCHUP_TTL   = 3 * 24 * 3600;
+ 
+ function teamKey(season, week, team) {
+@@ -1457,7 +1452,11 @@
+     source: source ?? null
+   };
+ 
+-  await env.RTP_CACHE.put(key, JSON.stringify(payload), { expirationTtl: TEAM_STATS_TTL });
++  if (TEAM_STATS_TTL) {
++    await env.RTP_CACHE.put(key, JSON.stringify(payload), { expirationTtl: TEAM_STATS_TTL });
++  } else {
++    await env.RTP_CACHE.put(key, JSON.stringify(payload));
++  }
+   return { key, saved: true };
+ }
