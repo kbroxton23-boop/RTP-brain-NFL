@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "rtp-nfl-ssot-reconstruction-v1",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  "limits": {
+    "cpu_ms": 300000,
+    "subrequests": 10000
+  },
+
+  "vars": {
+    "UI_ORIGIN": "https://YOUR-NFL-PAGES.pages.dev"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "NFL_DB",
+      "database_name": "rtp-nfl-ssot",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ],
+
+  "r2_buckets": [
+    {
+      "binding": "NFL_RAW",
+      "bucket_name": "rtp-nfl-raw-ssot"
+    }
+  ],
+
+  "workflows": [
+    {
+      "name": "rtp-nfl-season-reconstruction",
+      "binding": "SSOT_RECONSTRUCTION",
+      "class_name": "SeasonReconstructionWorkflow"
+    }
+  ]
+}
