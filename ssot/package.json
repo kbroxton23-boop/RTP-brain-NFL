@@ -1,0 +1,15 @@
+{
+  "name": "rtp-nfl-ssot-reconstruction-v1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/core.js && node --check src/bdl.js && node --check src/store.js && node --check src/phases.js && node --check src/workflow.js && node --check src/index.js",
+    "types": "wrangler types",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
