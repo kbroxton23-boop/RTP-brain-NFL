@@ -17,8 +17,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Reassemble unified SSOT candidate patch
+        run: |
+          cat patches/unified-brain-v8-ssot-v1/*.part > /tmp/unified-brain-v8-ssot-v1.patch
+          echo "08b0114ef3facf1d22232a6a4288d65a0ac52b01c2471b463929e3d3946e9740  /tmp/unified-brain-v8-ssot-v1.patch" | sha256sum -c -
       - name: Apply unified SSOT candidate patch
-        run: git apply --check patches/unified-brain-v8-ssot-v1.patch && git apply patches/unified-brain-v8-ssot-v1.patch
+        run: git apply --check /tmp/unified-brain-v8-ssot-v1.patch && git apply /tmp/unified-brain-v8-ssot-v1.patch
       - name: Syntax check unified Worker
         run: node --check brain-elite-v8.js
       - name: Run regression + SSOT contracts
