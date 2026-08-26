@@ -1,0 +1,155 @@
+
++  penalties INTEGER,
++  penalty_yards INTEGER,
++  turnovers INTEGER,
++  fumbles_lost INTEGER,
++  interceptions_thrown INTEGER,
++  defensive_touchdowns INTEGER,
++  possession_time_seconds INTEGER,
++  source TEXT NOT NULL,
++  observed_at TEXT NOT NULL,
++  ingested_at TEXT NOT NULL,
++  payload_hash TEXT NOT NULL,
++  raw_r2_key TEXT NOT NULL,
++  schema_version TEXT NOT NULL,
++  build TEXT NOT NULL,
++  PRIMARY KEY (game_id, team_id)
++);
++CREATE INDEX IF NOT EXISTS idx_nfl_team_stats_season_team_week ON nfl_team_game_stats(season, team_id, week);
++CREATE TABLE IF NOT EXISTS nfl_ssot_runs (
++  run_id TEXT PRIMARY KEY,
++  phase TEXT NOT NULL,
++  season INTEGER NOT NULL,
++  season_type INTEGER NOT NULL,
++  status TEXT NOT NULL,
++  cursor TEXT,
++  processed_pages INTEGER NOT NULL DEFAULT 0,
++  fetched_rows INTEGER NOT NULL DEFAULT 0,
++  stored_rows INTEGER NOT NULL DEFAULT 0,
++  error_count INTEGER NOT NULL DEFAULT 0,
++  started_at TEXT NOT NULL,
++  updated_at TEXT NOT NULL,
++  completed_at TEXT,
++  checkpoint_json TEXT,
++  build TEXT NOT NULL
++);
++CREATE TABLE IF NOT EXISTS nfl_ssot_receipts (
++  receipt_id TEXT PRIMARY KEY,
++  run_id TEXT NOT NULL,
++  phase TEXT NOT NULL,
++  season INTEGER NOT NULL,
++  season_type INTEGER NOT NULL,
++  page_cursor TEXT,
++  next_cursor TEXT,
++  source_row_count INTEGER NOT NULL,
++  stored_row_count INTEGER NOT NULL,
++  payload_hash TEXT NOT NULL,
++  raw_r2_key TEXT NOT NULL,
++  created_at TEXT NOT NULL,
++  schema_version TEXT NOT NULL,
++  build TEXT NOT NULL
++);
++CREATE INDEX IF NOT EXISTS idx_nfl_ssot_receipts_run ON nfl_ssot_receipts(run_id, created_at);
++CREATE TABLE IF NOT EXISTS nfl_ssot_certifications (
++  cert_key TEXT PRIMARY KEY,
++  season INTEGER NOT NULL,
++  season_type INTEGER NOT NULL,
++  phase TEXT NOT NULL,
++  complete INTEGER NOT NULL,
++  certified INTEGER NOT NULL,
++  expected_rows INTEGER NOT NULL,
++  found_rows INTEGER NOT NULL,
++  missing_rows INTEGER NOT NULL,
++  invalid_rows INTEGER NOT NULL,
++  details_json TEXT,
++  assessed_at TEXT NOT NULL,
++  schema_version TEXT NOT NULL,
++  build TEXT NOT NULL
++);
++`;
++
++function ssotInt(v, fallback = null) {
++  const n = Number(v);
++  return Number.isInteger(n) ? n : fallback;
++}
++function ssotNum(v, fallback = null) {
++  const n = Number(v);
++  return Number.isFinite(n) ? n : fallback;
++}
++function ssotText(v, fallback = null) {
++  if (v === null || v === undefined) return fallback;
++  const s = String(v).trim();
++  return s ? s : fallback;
++}
++function ssotSeason(v) {
++  const n = ssotInt(v);
++  if (!n || n < 2002 || n > 2100) throw new Error("ssot_invalid_season");
++  return n;
++}
++function ssotSeasonType(v) {
++  const n = ssotInt(v, 2);
++  if (![1, 2, 3].includes(n)) throw new Error("ssot_invalid_season_type");
++  return n;
++}
++function ssotCanonicalGameId(game) {
++  const id = ssotInt(game?.id);
++  if (!id) throw new Error("ssot_game_missing_bdl_id");
++  return `bdl:${id}`;
++}
++function ssotStableStringify(value) {
++  if (value === null || typeof value !== "object") return JSON.stringify(value);
++  if (Array.isArray(value)) return `[${value.map(ssotStableStringify).join(",")}]`;
++  const keys = Object.keys(value).sort();
++  return `{${keys.map(k => `${JSON.stringify(k)}:${ssotStableStringify(value[k])}`).join(",")}}`;
++}
++async function ssotSha256(value) {
++  const input = typeof value === "string" ? value : ssotStableStringify(value);
++  const bytes = new TextEncoder().encode(input);
++  const digest = await crypto.subtle.digest("SHA-256", bytes);
++  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
++}
++async function ssotSecureEqual(a, b) {
++  const [ha, hb] = await Promise.all([ssotSha256(String(a ?? "")), ssotSha256(String(b ?? ""))]);
++  return ha === hb;
++}
++function ssotBindings(env) {
++  return {
++    d1: !!env?.NFL_DB,
++    r2: !!env?.NFL_RAW,
++    bdl_key: !!env?.BDL_NFL_API_KEY,
++    admin_token: !!env?.SSOT_ADMIN_TOKEN
++  };
++}
++function ssotRequireBindings(env, needRaw = true) {
++  if (!env?.NFL_DB) throw new Error("ssot_missing_NFL_DB_binding");
++  if (needRaw && !env?.NFL_RAW) throw new Error("ssot_missing_NFL_RAW_binding");
++  if (!env?.BDL_NFL_API_KEY) throw new Error("ssot_missing_BDL_NFL_API_KEY");
++}
++async function ssotRequireAdmin(req, env) {
++  if (!env?.SSOT_ADMIN_TOKEN) return { ok: false, status: 500, error: "ssot_missing_admin_token" };
++  const auth = req.headers.get("authorization") || "";
++  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
++  return await ssotSecureEqual(token, env.SSOT_ADMIN_TOKEN)
++    ? { ok: true }
++    : { ok: false, status: 401, error: "ssot_unauthorized" };
++}
++function ssotNormalizeGame(game, seasonType, observedAt) {
++  const home = game?.home_team || {};
++  const away = game?.visitor_team || {};
++  const season = ssotSeason(game?.season);
++  const week = ssotInt(game?.week);
++  if (!week) throw new Error("ssot_game_missing_week");
++  if (!ssotText(home?.abbreviation) || !ssotText(away?.abbreviation)) throw new Error("ssot_game_missing_team_identity");
++  return {
++    game_id: ssotCanonicalGameId(game), bdl_game_id: ssotInt(game.id), season, week,
++    season_type: seasonType, kickoff_at: ssotText(game.date), status_state: ssotText(game.status_state, "unknown").toLowerCase(),
++    status_text: ssotText(game.status), postseason: game.postseason === true ? 1 : 0,
++    venue: ssotText(game.venue), summary: ssotText(game.summary),
++    home_team_id: ssotInt(home.id), home_team_abbr: ssotText(home.abbreviation)?.toUpperCase() || null, home_team_name: ssotText(home.full_name),
++    away_team_id: ssotInt(away.id), away_team_abbr: ssotText(away.abbreviation)?.toUpperCase() || null, away_team_name: ssotText(away.full_name),
++    home_score: ssotInt(game.home_team_score), away_score: ssotInt(game.visitor_team_score),
++    source: NFL_SSOT_PROVIDER, observed_at: observedAt, ingested_at: observedAt,
++    schema_version: NFL_SSOT_SCHEMA_VERSION, build: BUILD
++  };
++}
++function ssotNormalizeTeamStat(stat,
