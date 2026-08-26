@@ -1,0 +1,54 @@
+ seasonType, observedAt) {
++  const game = stat?.game || {};
++  const team = stat?.team || {};
++  const teamId = ssotInt(team.id);
++  const homeId = ssotInt(game?.home_team?.id);
++  const awayId = ssotInt(game?.visitor_team?.id);
++  let side = null, opp = null;
++  if (teamId && teamId === homeId) { side = "home"; opp = game.visitor_team; }
++  else if (teamId && teamId === awayId) { side = "away"; opp = game.home_team; }
++  if (!teamId || !side || !ssotText(team.abbreviation)) throw new Error("ssot_team_stat_identity_mismatch");
++  return {
++    game_id: ssotCanonicalGameId(game), bdl_game_id: ssotInt(game.id), season: ssotSeason(game.season), week: ssotInt(game.week), season_type: seasonType,
++    team_id: teamId, team_abbr: ssotText(team.abbreviation)?.toUpperCase() || null, team_name: ssotText(team.full_name),
++    opponent_team_id: ssotInt(opp?.id), opponent_abbr: ssotText(opp?.abbreviation)?.toUpperCase() || null, home_away: side,
++    first_downs: ssotInt(stat.first_downs), third_down_conversions: ssotInt(stat.third_down_conversions), third_down_attempts: ssotInt(stat.third_down_attempts),
++    fourth_down_conversions: ssotInt(stat.fourth_down_conversions), fourth_down_attempts: ssotInt(stat.fourth_down_attempts),
++    total_offensive_plays: ssotInt(stat.total_offensive_plays), total_yards: ssotInt(stat.total_yards), yards_per_play: ssotNum(stat.yards_per_play), total_drives: ssotInt(stat.total_drives),
++    net_passing_yards: ssotInt(stat.net_passing_yards), passing_completions: ssotInt(stat.passing_completions), passing_attempts: ssotInt(stat.passing_attempts), yards_per_pass: ssotNum(stat.yards_per_pass),
++    sacks: ssotInt(stat.sacks), sack_yards_lost: ssotInt(stat.sack_yards_lost), rushing_yards: ssotInt(stat.rushing_yards), rushing_attempts: ssotInt(stat.rushing_attempts), yards_per_rush_attempt: ssotNum(stat.yards_per_rush_attempt),
++    red_zone_scores: ssotInt(stat.red_zone_scores), red_zone_attempts: ssotInt(stat.red_zone_attempts), penalties: ssotInt(stat.penalties), penalty_yards: ssotInt(stat.penalty_yards),
++    turnovers: ssotInt(stat.turnovers), fumbles_lost: ssotInt(stat.fumbles_lost), interceptions_thrown: ssotInt(stat.interceptions_thrown), defensive_touchdowns: ssotInt(stat.defensive_touchdowns),
++    possession_time_seconds: ssotInt(stat.possession_time_seconds), source: NFL_SSOT_PROVIDER, observed_at: observedAt, ingested_at: observedAt,
++    schema_version: NFL_SSOT_SCHEMA_VERSION, build: BUILD
++  };
++}
++async function ssotBdlPage(env, endpoint, { season, seasonType, cursor = null }) {
++  const url = new URL(`https://api.balldontlie.io/nfl/v1/${endpoint}`);
++  url.searchParams.append("seasons[]", String(season));
++  url.searchParams.append("season_type[]", String(seasonType));
++  url.searchParams.set("per_page", "100");
++  if (cursor !== null && cursor !== undefined && cursor !== "") url.searchParams.set("cursor", String(cursor));
++  const res = await fetch(url, { headers: { Authorization: env.BDL_NFL_API_KEY, Accept: "application/json" } });
++  const rawText = await res.text();
++  const payload = safeJsonParse(rawText);
++  if (!res.ok) throw new Error(`ssot_bdl_${endpoint}_http_${res.status}:${ssotText(payload?.error || payload?.message, "unknown")}`);
++  if (!payload || !Array.isArray(payload.data)) throw new Error(`ssot_bdl_${endpoint}_invalid_payload`);
++  return { data: payload.data, next_cursor: payload?.meta?.next_cursor ?? null, raw_text: rawText };
++}
++function ssotRawKey(phase, season, seasonType, cursor, hash) {
++  const c = cursor === null || cursor === undefined || cursor === "" ? "START" : encodeURIComponent(String(cursor));
++  return `raw/bdl/nfl/v1/${phase}/season=${season}/season_type=${seasonType}/cursor=${c}/${hash}.json`;
++}
++async function ssotArchivePage(env, phase, season, seasonType, cursor, rawText) {
++  const hash = await ssotSha256(rawText);
++  const key = ssotRawKey(phase, season, seasonType, cursor, hash);
++  await env.NFL_RAW.put(key, rawText, { httpMetadata: { contentType: "application/json" }, customMetadata: { provider: NFL_SSOT_PROVIDER, phase, season: String(season), season_type: String(seasonType), build: BUILD } });
++  return { payload_hash: hash, raw_r2_key: key };
++}
++const SSOT_GAME_UPSERT = `INSERT INTO nfl_games (
++ game_id,bdl_game_id,season,week,season_type,kickoff_at,status_state,status_text,postseason,venue,summary,home_team_id,home_team_abbr,home_team_name,away_team_id,away_team_abbr,away_team_name,home_score,away_score,source,observed_at,ingested_at,payload_hash,raw_r2_key,schema_version,build
++) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
++ON CONFLICT(game_id) DO UPDATE SET season=excluded.season,week=excluded.week,season_type=excluded.season_type,kickoff_at=excluded.kickoff_at,status_state=excluded.status_state,status_text=excluded.status_text,postseason=excluded.postseason,venue=excluded.venue,summary=excluded.summary,home_team_id=excluded.home_team_id,home_team_abbr=excluded.home_team_abbr,home_team_name=excluded.home_team_name,away_team_id=excluded.away_team_id,away_team_abbr=excluded.away_team_abbr,away_team_name=excluded.away_team_name,home_score=excluded.home_score,away_score=excluded.away_score,observed_at=excluded.observed_at,ingested_at=excluded.ingested_at,payload_hash=excluded.payload_hash,raw_r2_key=excluded.raw_r2_key,schema_version=excluded.schema_version,build=excluded.build`;
++const SSOT_TEAM_UPSERT = `INSERT INTO nfl_team_game_stats (
++ game_id,bdl_game_id,season,week,season_type,team_id,team_abbr,team_name,opponent_team_id,opponent_abbr,home_away,first_downs,third_down_conversions,third_down_attempts,fourth_down_conversions,fourth_down_attempts,total_offensive_plays,total_yards,yards_per_play,total_drives,net_passing_yards,passing_completions,passing_attempts,yards_per_pass,sacks,sack_yards_lost,rushing_yards,rushing_attempts,yards_per_rush_attempt,red_zone_scores,red_zone_attempts,penalties,penalty_yards,turnovers,fumbles_lost,interceptions_thrown,defensive_touchdowns,posses
