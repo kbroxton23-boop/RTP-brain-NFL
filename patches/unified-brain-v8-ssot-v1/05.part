@@ -1,0 +1,46 @@
+w Date().toISOString();
++  let runId = ssotText(body?.run_id) || `ssot-${phase}-${season}-t${seasonType}-${crypto.randomUUID()}`;
++  let prior = body?.run_id ? await ssotGetRun(env, runId) : null;
++  let cursor = body?.cursor ?? prior?.cursor ?? null;
++  let processedPages = Number(prior?.processed_pages || 0), fetchedRows = Number(prior?.fetched_rows || 0), storedRows = Number(prior?.stored_rows || 0), errors = Number(prior?.error_count || 0);
++  const startedAt = prior?.started_at || now;
++  let complete = false, stoppedReason = null;
++  while (ssotCanContinue(budget)) {
++    try {
++      const endpoint = phase === "games" ? "games" : "team_stats";
++      const page = await ssotBdlPage(env, endpoint, { season, seasonType, cursor });
++      budget.calls += 1; budget.pages += 1; budget.rows += page.data.length;
++      const archive = await ssotArchivePage(env, phase, season, seasonType, cursor, page.raw_text);
++      const observedAt = new Date().toISOString();
++      const normalized = phase === "games" ? page.data.map(x => ssotNormalizeGame(x, seasonType, observedAt)) : page.data.map(x => ssotNormalizeTeamStat(x, seasonType, observedAt));
++      const stored = await ssotUpsertRows(env, phase, normalized, archive);
++      await ssotWriteReceipt(env, { run_id: runId, phase, season, season_type: seasonType, page_cursor: cursor, next_cursor: page.next_cursor, source_row_count: page.data.length, stored_row_count: stored, payload_hash: archive.payload_hash, raw_r2_key: archive.raw_r2_key, created_at: observedAt });
++      processedPages += 1; fetchedRows += page.data.length; storedRows += stored; cursor = page.next_cursor ?? null;
++      if (cursor === null) { complete = true; break; }
++    } catch (e) { errors += 1; stoppedReason = `ssot_page_error:${String(e?.message || e)}`; break; }
++  }
++  if (!complete && !stoppedReason) stoppedReason = "ssot_budget_checkpoint";
++  const updated = new Date().toISOString();
++  await ssotSaveRun(env, { run_id: runId, phase, season, season_type: seasonType, status: complete ? "complete" : errors ? "error" : "checkpointed", cursor, processed_pages: processedPages, fetched_rows: fetchedRows, stored_rows: storedRows, error_count: errors, started_at: startedAt, updated_at: updated, completed_at: complete ? updated : null, checkpoint: { stopped_reason: stoppedReason, next_cursor: cursor } });
++  return { run_id: runId, phase, season, season_type: seasonType, processed_pages: processedPages, fetched_rows: fetchedRows, stored_rows: storedRows, errors, complete, stopped_reason: stoppedReason, next_cursor: cursor, continuation_allowed: !complete && errors === 0, budget: { budget_ms: budget.budget_ms, call_budget: budget.call_budget, max_pages: budget.max_pages, max_rows: budget.max_rows, calls_used: budget.calls, pages_used: budget.pages, rows_used: budget.rows, elapsed_ms: Date.now() - budget.started_ms } };
++}
++async function ssotUpsertCertification(env, c) {
++  await env.NFL_DB.prepare(`INSERT INTO nfl_ssot_certifications (cert_key,season,season_type,phase,complete,certified,expected_rows,found_rows,missing_rows,invalid_rows,details_json,assessed_at,schema_version,build) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(cert_key) DO UPDATE SET complete=excluded.complete,certified=excluded.certified,expected_rows=excluded.expected_rows,found_rows=excluded.found_rows,missing_rows=excluded.missing_rows,invalid_rows=excluded.invalid_rows,details_json=excluded.details_json,assessed_at=excluded.assessed_at,schema_version=excluded.schema_version,build=excluded.build`).bind(
++    c.cert_key,c.season,c.season_type,c.phase,c.complete?1:0,c.certified?1:0,c.expected_rows,c.found_rows,c.missing_rows,c.invalid_rows,JSON.stringify(c.details || {}),c.assessed_at,NFL_SSOT_SCHEMA_VERSION,BUILD
++  ).run();
++}
++async function ssotCertifyGames(env, season, seasonType) {
++  ssotRequireBindings(env, false); season = ssotSeason(season); seasonType = ssotSeasonType(seasonType);
++  const run = await env.NFL_DB.prepare("SELECT * FROM nfl_ssot_runs WHERE phase='games' AND season=? AND season_type=? ORDER BY started_at DESC LIMIT 1").bind(season, seasonType).first();
++  const q = await env.NFL_DB.prepare("SELECT COUNT(*) n, SUM(CASE WHEN bdl_game_id IS NULL OR week IS NULL OR home_team_id IS NULL OR away_team_id IS NULL OR home_team_abbr IS NULL OR away_team_abbr IS NULL THEN 1 ELSE 0 END) invalid FROM nfl_games WHERE season=? AND season_type=?").bind(season, seasonType).first();
++  const expected = Number(run?.fetched_rows || 0), found = Number(q?.n || 0), invalid = Number(q?.invalid || 0), missing = Math.max(0, expected - found);
++  const complete = run?.status === "complete", certified = !!run && complete && expected > 0 && missing === 0 && invalid === 0;
++  const c = { cert_key:`games:${season}:t${seasonType}`, season, season_type:seasonType, phase:"games", complete, certified, expected_rows:expected, found_rows:found, missing_rows:missing, invalid_rows:invalid, assessed_at:new Date().toISOString(), details:{ authority:"bdl_cursor_exhaustion_plus_d1_identity", run_id:run?.run_id || null } };
++  await ssotUpsertCertification(env, c); return c;
++}
++async function ssotCertifyTeamStats(env, season, seasonType) {
++  ssotRequireBindings(env, false); season = ssotSeason(season); seasonType = ssotSeasonType(seasonType);
++  const gameCert = await env.NFL_DB.prepare("SELECT * FROM nfl_ssot_certifications WHERE cert_key=?").bind(`games:${season}:t${seasonType}`).first();
++  const fg = await env.NFL_DB.prepare("SELECT COUNT(*) n FROM nfl_games WHERE season=? AND season_type=? AND status_state='final'").bind(season, seasonType).first();
++  const fs = await env.NFL_DB.prepare("SELECT COUNT(*) n FROM nfl_team_game_stats s JOIN nfl_games g ON g.game_id=s.game_id WHERE g.season=? AND g.season_type=? AND g.status_state='final'").bind(season, seasonType).first();
++  const bad = await env.NFL_DB.prepare("SELECT COUNT(*) n FROM (SELECT g.game_id, COUNT(s.team_id) c FROM nfl_games g LEFT JOIN nfl_team_game_s
