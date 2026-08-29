@@ -1,0 +1,46 @@
+sion_time_seconds,source,observed_at,ingested_at,payload_hash,raw_r2_key,schema_version,build
++) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
++ON CONFLICT(game_id,team_id) DO UPDATE SET season=excluded.season,week=excluded.week,season_type=excluded.season_type,team_abbr=excluded.team_abbr,team_name=excluded.team_name,opponent_team_id=excluded.opponent_team_id,opponent_abbr=excluded.opponent_abbr,home_away=excluded.home_away,first_downs=excluded.first_downs,third_down_conversions=excluded.third_down_conversions,third_down_attempts=excluded.third_down_attempts,fourth_down_conversions=excluded.fourth_down_conversions,fourth_down_attempts=excluded.fourth_down_attempts,total_offensive_plays=excluded.total_offensive_plays,total_yards=excluded.total_yards,yards_per_play=excluded.yards_per_play,total_drives=excluded.total_drives,net_passing_yards=excluded.net_passing_yards,passing_completions=excluded.passing_completions,passing_attempts=excluded.passing_attempts,yards_per_pass=excluded.yards_per_pass,sacks=excluded.sacks,sack_yards_lost=excluded.sack_yards_lost,rushing_yards=excluded.rushing_yards,rushing_attempts=excluded.rushing_attempts,yards_per_rush_attempt=excluded.yards_per_rush_attempt,red_zone_scores=excluded.red_zone_scores,red_zone_attempts=excluded.red_zone_attempts,penalties=excluded.penalties,penalty_yards=excluded.penalty_yards,turnovers=excluded.turnovers,fumbles_lost=excluded.fumbles_lost,interceptions_thrown=excluded.interceptions_thrown,defensive_touchdowns=excluded.defensive_touchdowns,possession_time_seconds=excluded.possession_time_seconds,observed_at=excluded.observed_at,ingested_at=excluded.ingested_at,payload_hash=excluded.payload_hash,raw_r2_key=excluded.raw_r2_key,schema_version=excluded.schema_version,build=excluded.build`;
++async function ssotUpsertRows(env, phase, rows, archive) {
++  let stored = 0;
++  for (let i = 0; i < rows.length; i += 25) {
++    const group = rows.slice(i, i + 25);
++    const statements = [];
++    for (const r of group) {
++      const rowHash = await ssotSha256(r);
++      if (phase === "games") statements.push(env.NFL_DB.prepare(SSOT_GAME_UPSERT).bind(
++        r.game_id,r.bdl_game_id,r.season,r.week,r.season_type,r.kickoff_at,r.status_state,r.status_text,r.postseason,r.venue,r.summary,r.home_team_id,r.home_team_abbr,r.home_team_name,r.away_team_id,r.away_team_abbr,r.away_team_name,r.home_score,r.away_score,r.source,r.observed_at,r.ingested_at,rowHash,archive.raw_r2_key,r.schema_version,r.build
++      ));
++      else statements.push(env.NFL_DB.prepare(SSOT_TEAM_UPSERT).bind(
++        r.game_id,r.bdl_game_id,r.season,r.week,r.season_type,r.team_id,r.team_abbr,r.team_name,r.opponent_team_id,r.opponent_abbr,r.home_away,r.first_downs,r.third_down_conversions,r.third_down_attempts,r.fourth_down_conversions,r.fourth_down_attempts,r.total_offensive_plays,r.total_yards,r.yards_per_play,r.total_drives,r.net_passing_yards,r.passing_completions,r.passing_attempts,r.yards_per_pass,r.sacks,r.sack_yards_lost,r.rushing_yards,r.rushing_attempts,r.yards_per_rush_attempt,r.red_zone_scores,r.red_zone_attempts,r.penalties,r.penalty_yards,r.turnovers,r.fumbles_lost,r.interceptions_thrown,r.defensive_touchdowns,r.possession_time_seconds,r.source,r.observed_at,r.ingested_at,rowHash,archive.raw_r2_key,r.schema_version,r.build
++      ));
++    }
++    if (statements.length) { const results = await env.NFL_DB.batch(statements); stored += results.length; }
++  }
++  return stored;
++}
++async function ssotGetRun(env, runId) { return await env.NFL_DB.prepare("SELECT * FROM nfl_ssot_runs WHERE run_id=?").bind(runId).first(); }
++async function ssotSaveRun(env, r) {
++  await env.NFL_DB.prepare(`INSERT INTO nfl_ssot_runs (run_id,phase,season,season_type,status,cursor,processed_pages,fetched_rows,stored_rows,error_count,started_at,updated_at,completed_at,checkpoint_json,build)
++   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET status=excluded.status,cursor=excluded.cursor,processed_pages=excluded.processed_pages,fetched_rows=excluded.fetched_rows,stored_rows=excluded.stored_rows,error_count=excluded.error_count,updated_at=excluded.updated_at,completed_at=excluded.completed_at,checkpoint_json=excluded.checkpoint_json,build=excluded.build`).bind(
++    r.run_id,r.phase,r.season,r.season_type,r.status,r.cursor ?? null,r.processed_pages,r.fetched_rows,r.stored_rows,r.error_count,r.started_at,r.updated_at,r.completed_at ?? null,JSON.stringify(r.checkpoint || {}),BUILD
++  ).run();
++}
++async function ssotWriteReceipt(env, rec) {
++  const id = await ssotSha256(`${rec.run_id}|${rec.phase}|${rec.page_cursor ?? "START"}|${rec.payload_hash}`);
++  await env.NFL_DB.prepare(`INSERT OR IGNORE INTO nfl_ssot_receipts (receipt_id,run_id,phase,season,season_type,page_cursor,next_cursor,source_row_count,stored_row_count,payload_hash,raw_r2_key,created_at,schema_version,build) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
++    id,rec.run_id,rec.phase,rec.season,rec.season_type,rec.page_cursor ?? null,rec.next_cursor ?? null,rec.source_row_count,rec.stored_row_count,rec.payload_hash,rec.raw_r2_key,rec.created_at,NFL_SSOT_SCHEMA_VERSION,BUILD
++  ).run();
++}
++function ssotBudget(body) {
++  return {
++    started_ms: Date.now(), budget_ms: Math.max(5000, Math.min(ssotInt(body?.budget_ms, 80000), 120000)),
++    call_budget: Math.max(1, Math.min(ssotInt(body?.call_budget, 5), 20)), max_pages: Math.max(1, Math.min(ssotInt(body?.max_pages, 5), 20)),
++    max_rows: Math.max(1, Math.min(ssotInt(body?.max_rows, 500), 2000)), calls: 0, pages: 0, rows: 0
++  };
++}
++function ssotCanContinue(b) { return Date.now() < b.started_ms + b.budget_ms - 4000 && b.calls < b.call_budget && b.pages < b.max_pages && b.rows < b.max_rows; }
++async function ssotRunIngest(env, body, phase) {
++  ssotRequireBindings(env, true);
++  const season = ssotSeason(body?.season), seasonType = ssotSeasonType(body?.season_type), budget = ssotBudget(body);
++  const now = ne

@@ -1,0 +1,68 @@
+tats s ON s.game_id=g.game_id WHERE g.season=? AND g.season_type=? AND g.status_state='final' GROUP BY g.game_id HAVING c<>2)").bind(season, seasonType).first();
++  const mismatch = await env.NFL_DB.prepare("SELECT COUNT(*) n FROM nfl_team_game_stats s JOIN nfl_games g ON g.game_id=s.game_id WHERE g.season=? AND g.season_type=? AND g.status_state='final' AND s.team_id<>g.home_team_id AND s.team_id<>g.away_team_id").bind(season, seasonType).first();
++  const expected=Number(fg?.n||0)*2, found=Number(fs?.n||0), invalid=Number(mismatch?.n||0), badGames=Number(bad?.n||0), missing=Math.max(0,expected-found);
++  const complete=expected>0 && found>=expected, certified=gameCert?.certified===1 && complete && missing===0 && invalid===0 && badGames===0;
++  const c={ cert_key:`team_stats:${season}:t${seasonType}`,season,season_type:seasonType,phase:"team_stats",complete,certified,expected_rows:expected,found_rows:found,missing_rows:missing,invalid_rows:invalid,assessed_at:new Date().toISOString(),details:{authority:"two_team_rows_per_final_bdl_game",final_games:Number(fg?.n||0),games_with_row_count_not_2:badGames,dependency_games_certified:gameCert?.certified===1} };
++  await ssotUpsertCertification(env,c); return c;
++}
++async function handleSsot(req, env, origin, pathname, url) {
++  if (pathname === "/ssot/health" && req.method === "GET") return ok({ build: BUILD, schema_version: NFL_SSOT_SCHEMA_VERSION, role: "unified_brain_v8_factual_ssot", model_math_mutated: false, bindings: ssotBindings(env) }, {}, origin);
++  if (pathname === "/ssot/audit/season" && req.method === "GET") {
++    if (!env?.NFL_DB) return fail("ssot_missing_NFL_DB_binding",500,{},origin);
++    const season=ssotSeason(url.searchParams.get("season")||2025);
++    const cert=await env.NFL_DB.prepare("SELECT * FROM nfl_ssot_certifications WHERE season=? ORDER BY season_type,phase").bind(season).all();
++    const games=await env.NFL_DB.prepare("SELECT season_type,status_state,COUNT(*) n FROM nfl_games WHERE season=? GROUP BY season_type,status_state").bind(season).all();
++    const stats=await env.NFL_DB.prepare("SELECT season_type,COUNT(*) n FROM nfl_team_game_stats WHERE season=? GROUP BY season_type").bind(season).all();
++    return ok({season,certifications:cert.results||[],game_counts:games.results||[],team_stat_counts:stats.results||[]},{},origin);
++  }
++  if (pathname === "/ssot/debug/run" && req.method === "GET") {
++    if (!env?.NFL_DB) return fail("ssot_missing_NFL_DB_binding",500,{},origin);
++    const runId=url.searchParams.get("run_id"); if(!runId) return fail("ssot_missing_run_id",400,{},origin);
++    const run=await ssotGetRun(env,runId); if(!run) return fail("ssot_run_not_found",404,{},origin);
++    const rec=await env.NFL_DB.prepare("SELECT * FROM nfl_ssot_receipts WHERE run_id=? ORDER BY created_at").bind(runId).all();
++    return ok({run,receipts:rec.results||[]},{},origin);
++  }
++  if (pathname === "/ssot/debug/game" && req.method === "GET") {
++    if (!env?.NFL_DB) return fail("ssot_missing_NFL_DB_binding",500,{},origin);
++    const id=ssotInt(url.searchParams.get("bdl_game_id")); if(!id) return fail("ssot_invalid_bdl_game_id",400,{},origin);
++    const game=await env.NFL_DB.prepare("SELECT * FROM nfl_games WHERE bdl_game_id=?").bind(id).first(); if(!game) return fail("ssot_game_not_found",404,{},origin);
++    const stats=await env.NFL_DB.prepare("SELECT * FROM nfl_team_game_stats WHERE game_id=? ORDER BY home_away").bind(game.game_id).all(); return ok({game,team_stats:stats.results||[]},{},origin);
++  }
++  if (req.method === "POST") {
++    const auth=await ssotRequireAdmin(req,env); if(!auth.ok) return fail(auth.error,auth.status,{},origin);
++    if (pathname === "/ssot/bootstrap") {
++      if(!env?.NFL_DB) return fail("ssot_missing_NFL_DB_binding",500,{},origin);
++      const result=await env.NFL_DB.exec(NFL_SSOT_SCHEMA_SQL); return ok({schema_version:NFL_SSOT_SCHEMA_VERSION,result},{},origin);
++    }
++    const body=await readJson(req);
++    if (pathname === "/ssot/ingest/games") return ok(await ssotRunIngest(env,body,"games"),{},origin);
++    if (pathname === "/ssot/ingest/team-stats") return ok(await ssotRunIngest(env,body,"team_stats"),{},origin);
++    if (pathname === "/ssot/certify/games") { const c=await ssotCertifyGames(env,body.season,body.season_type); return c.certified?ok(c,{},origin):fail("ssot_games_not_certified",409,c,origin); }
++    if (pathname === "/ssot/certify/team-stats") { const c=await ssotCertifyTeamStats(env,body.season,body.season_type); return c.certified?ok(c,{},origin):fail("ssot_team_stats_not_certified",409,c,origin); }
++  }
++  return fail("ssot_not_found",404,{pathname},origin);
++}
++
++function getEnvShim(explicitEnv = null) {
++  // Module Worker authority. Cloudflare D1 is only available through module env
++  // bindings, so all production requests pass the real `env` object here.
++  // Fallback globals remain only to keep legacy/local harnesses compatible.
++  const e = explicitEnv || {};
+   return {
+-    RTP_CACHE: typeof RTP_CACHE !== "undefined" ? RTP_CACHE : null,
+-    ODDS_API_KEY: typeof ODDS_API_KEY !== "undefined" ? ODDS_API_KEY : "",
+-    UI_ORIGIN: typeof UI_ORIGIN !== "undefined" ? UI_ORIGIN : "",
+-
+-    // Ball Don't Lie (NFL) — Injuries
+-    BDL_NFL_API_KEY: typeof BDL_NFL_API_KEY !== "undefined" ? BDL_NFL_API_KEY : "",
+-
+-    // Mateo (optional secondary injury feed)
+-    MATEO_INJURY_URL: typeof MATEO_INJURY_URL !== "undefined" ? MATEO_INJURY_URL : "",
+-    MATEO_API_KEY: typeof MATEO_API_KEY !== "undefined" ? MATEO_API_KEY : ""
++    RTP_CACHE: e.RTP_CACHE ?? (typeof RTP_CACHE !== "undefined" ? RTP_CACHE : null),
++    NFL_DB: e.NFL_DB ?? null,
++    NFL_RAW: e.NFL_RAW ?? null,
++    ODDS_API_KEY: e.ODDS_API_KEY ?? (typeof ODDS_API_KEY !== "undefined" ? ODDS_API_KEY : ""),
++    UI_ORIGIN: e.UI_ORIGIN ?? (typeof UI_ORIGIN !== "undefined" ? UI_ORIGIN : ""),
++    BDL_NFL_API_KEY: e.BDL_NFL_API_KEY ?? (typeof BDL_NFL_API_KEY !== "undefined" ? BDL_NFL_API_KEY : ""),
++    S

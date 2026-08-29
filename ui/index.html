@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RTP NFL Control Center · SSOT Runtime v1.4</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">RTP</div>
+      <div class="titles">
+        <div class="title">RTP NFL Control Center</div>
+        <div class="subtitle">Brain v8 · Unified SSOT Runtime Control</div>
+      </div>
+    </div>
+
+    <div class="base">
+      <label for="baseUrl">Worker Base</label>
+      <input id="baseUrl" type="url" value="" placeholder="https://<your-worker>.workers.dev" spellcheck="false" />
+      <button class="btn" id="btnPing">Ping</button>
+      <button class="btn" id="btnHealth">Health</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="tabs" role="tablist" aria-label="RTP Brain Tabs">
+      <button class="tab is-active" data-tab="status" role="tab" aria-selected="true">Status</button>
+      <button class="tab" data-tab="teams" role="tab" aria-selected="false">Teams</button>
+      <button class="tab" data-tab="matchup" role="tab" aria-selected="false">Matchup Sim</button>
+      <button class="tab" data-tab="model" role="tab" aria-selected="false">Model</button>
+      <button class="tab" data-tab="lines" role="tab" aria-selected="false">Lines</button>
+      <button class="tab" data-tab="anchors" role="tab" aria-selected="false">Anchors</button>
+      <button class="tab" data-tab="cal" role="tab" aria-selected="false">Calibration</button>
+      <button class="tab" data-tab="props" role="tab" aria-selected="false">Props</button>
+      <button class="tab" data-tab="ssot" role="tab" aria-selected="false">SSOT</button>
+      <button class="tab" data-tab="ops" role="tab" aria-selected="false">Operations</button>
+      <button class="tab" data-tab="logs" role="tab" aria-selected="false">Logs</button>
+    </aside>
+
+    <section class="content">
+      <!-- STATUS -->
+      <section id="tab-status" class="panel is-active" role="tabpanel">
+        <h2>Status</h2>
+        <div class="grid2">
+          <div class="card">
+            <h3>Quick Checks</h3>
+            <div class="row">
+              <button class="btn primary" id="btnStatus">GET /status</button>
+              <button class="btn" id="btnRoot">GET /</button>
+            </div>
+            <div class="hint">Use these first to confirm KV + upstreams are alive.</div>
+          </div>
+          <div class="card">
+            <h3>Defaults</h3>
+            <div class="hint">This UI avoids preflight traps where possible. If you still see <b>TypeError: Load failed</b>, your Worker likely needs CORS/OPTIONS enabled for that route.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TEAMS -->
+      <section id="tab-teams" class="panel" role="tabpanel">
+        <h2>Teams</h2>
+
+        <div class="grid2">
+          <div class="card">
+            <h3>Upload Team Stats CSV</h3>
+            <div class="hint">Upload TeamWell CSV into the Brain KV. Prefer <code>week</code> + <code>merge=true</code> for stable ops.</div>
+            <div class="grid3">
+              <div>
+                <label>Season</label>
+                <input id="tuSeason" type="number" value="2025" />
+              </div>
+              <div>
+                <label>Week</label>
+                <input id="tuWeek" type="text" value="17" />
+              </div>
+              <div class="check">
+                <label><input id="tuMerge" type="checkbox" checked /> merge=true</label>
+              </div>
+            </div>
+            <div class="row">
+              <input id="teamFile" type="file" accept=".csv,text/csv" />
+            </div>
+            <div class="row">
+              <button class="btn primary" id="btnTeamsUpload">POST /teams/upload</button>
+              <button class="btn" id="btnTeamsIngest">POST /teams/ingest</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Get Team (KV)</h3>
+            <div class="form">
+              <div>
+                <label>Season</label>
+                <input id="tgSeason" type="number" value="2025" />
+              </div>
+              <div>
+                <label>Week</label>
+                <input id="tgWeek" type="text" value="15" />
+              </div>
+              <div>
+                <label>Team</label>
+                <input id="tgTeam" type="text" value="TB" maxlength="3" />
+              </div>
+            </div>
+            <div class="row">
+              <button class="btn primary" id="btnTeamsGet">GET /teams/get</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top:12px">
+          <div class="card">
+            <h3>Registry + Weights</h3>
+            <div class="row">
+              <button class="btn" id="btnRegistryCore">Core Registry</button>
+              <button class="btn" id="btnRegistryAll">All Registry</button>
+            </div>
+            <div class="grid3">
+              <div><label>Season</label><input id="wSeason" type="number" value="2025" /></div>
+              <div><label>Week</label><input id="wWeek" type="text" value="15" /></div>
+              <div><label>Name</label><input id="wName" type="text" value="sharp_v1" /></div>
+            </div>
+            <label>Weights JSON</label>
+            <textarea id="wJson" class="textarea" rows="10" spellcheck="false">{}</textarea>
+            <div class="row">
+              <button class="btn" id="btnWeightsGet">GET Weights</button>
+              <button class="btn primary" id="btnWeightsSave">POST Weights</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Features / Audit</h3>
+            <div class="grid3">
+              <div><label>Season</label><input id="fSeason" type="number" value="2025" /></div>
+              <div><label>Week</label><input id="fWeek" type="text" value="15" /></div>
+              <div><label>Team</label><input id="fTeam" type="text" value="TB" maxlength="3" /></div>
+            </div>
+            <div class="grid3">
+              <div><label>Weights</label><input id="fWeights" type="text" value="sharp_v1" /></div>
+              <div><label>Only</label><input id="fOnly" type="text" placeholder="optional" /></div>
+              <div class="check"><label><input id="fIncludeRaw" type="checkbox" checked /> include raw</label></div>
+            </div>
+            <div class="row"><button class="btn primary" id="btnFeatures">GET /teams/features</button></div>
+
+            <hr />
+            <div class="grid3">
+              <div><label>Season</label><input id="aSeason" type="number" value="2025" /></div>
+              <div><label>Week</label><input id="aWeek" type="text" value="15" /></div>
+              <div><label>Teams</label><input id="aTeams" type="text" value="TB,ATL" /></div>
+            </div>
+            <div class="grid3">
+              <div><label>Tolerance</label><input id="aTol" type="number" step="0.01" value="0.001" /></div>
+              <div class="check"><label><input id="aWeekAll" type="checkbox" /> all weeks</label></div>
+              <div class="check"><label><input id="aIncludeRaw" type="checkbox" checked /> include raw</label></div>
+            </div>
+            <div class="row"><button class="btn" id="btnAudit">GET /teams/audit</button></div>
+          </div>
+        </div>
+
+        <div id="featuresTableCard" class="card" style="margin-top:12px; display:none">
+          <h3>Feature Contributions</h3>
+          <div class="tableWrap"><table id="featuresTable"><thead><tr><th>stat_id</th><th>group</th><th>value</th><th>z</th><th>weight</th><th>contribution</th><th>source</th><th>defaulted</th></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div id="rawDottedCard" class="card" style="margin-top:12px; display:none">
+          <div class="row"><h3 style="margin-right:auto">Raw Dotted</h3><input id="rawDottedFilter" type="text" placeholder="filter keys" /><button class="btn" id="btnRawDottedClear">Clear</button></div>
+          <div class="tableWrap"><table id="rawDottedTable"><thead><tr><th>key</th><th>value</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- MATCHUP -->
+      <section id="tab-matchup" class="panel" role="tabpanel">
+        <h2>Matchup Sim</h2>
+        <div class="grid2">
+          <div class="card">
+            <h3>Inputs</h3>
+            <div class="grid3">
+              <div><label>Season</label><input id="msSeason" type="number" value="2025" /></div>
+              <div><label>Week</label><input id="msWeek" type="number" value="15" /></div>
+              <div><label>Home</label><input id="msHome" type="text" value="TB" maxlength="3" /></div>
+              <div><label>Away</label><input id="msAway" type="text" value="ATL" maxlength="3" /></div>
+              <div><label>Weights</label><input id="msWeights" type="text" value="sharp_v1" /></div>
+            </div>
+
+            <div class="card" style="margin-top:12px; padding:12px">
+              <div class="row" style="align-items:center; justify-content:space-between">
+                <div>
+                  <h4 style="margin:0">Modifiers</h4>
+                  <div class="hint" style="margin-top:4px">Enable/disable split-driven modifiers. Safe to send even if the worker ignores it.</div>
+                </div>
+                <label class="switch"><input id="modEnabled" type="checkbox" checked /><span class="slider"></span></label>
+              </div>
+              <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-top:10px">
+                <label class="chk"><input id="modNonGarbage" type="checkbox" checked /> Non-garbage</label>
+                <label class="chk"><input id="modEarlyDown" type="checkbox" checked /> Early downs</label>
+                <label class="chk"><input id="modLateDown" type="checkbox" checked /> Late downs</label>
+                <label class="chk"><input id="modRedZone" type="checkbox" checked /> Red zone</label>
+              </div>
+              <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:10px">
+                <div><label>Blend mode</label><select id="modBlend"><option value="dual" selected>dual (core + mods)</option><option value="pure">pure core only</option><option value="mods_only">mods only</option></select></div>
+                <div><label>Core weight</label><input id="modPureW" type="number" step="0.05" min="0" max="1" value="0.7" /></div>
+                <div><label>Mods weight</label><input id="modModsW" type="number" step="0.05" min="0" max="1" value="0.3" /></div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-top:12px; padding:12px">
+              <h4 style="margin-top:0">Market (optional)</h4>
+              <div class="grid3">
+                <div><label>Home spread</label><input id="msMarketSpreadHome" type="number" step="0.5" placeholder="-3.5" /></div>
+                <div><label>Total</label><input id="msMarketTotal" type="number" step="0.5" placeholder="44.5" /></div>
+              </div>
+              <div class="grid3">
+                <div><label>ML home</label><input id="msOddsMlHome" type="number" placeholder="-150" /></div>
+                <div><label>ML away</label><input id="msOddsMlAway" type="number" placeholder="+130" /></div>
+                <div><label>Spread home odds</label><input id="msOddsSpreadHome" type="number" placeholder="-110" /></div>
+                <div><label>Spread away odds</label><input id="msOddsSpreadAway" type="number" placeholder="-110" /></div>
+                <div><label>Over odds</label><input id="msOddsOver" type="number" placeholder="-110" /></div>
+                <div><label>Under odds</label><input id="msOddsUnder" type="number" placeholder="-110" /></div>
+              </div>
+              <div id="marketHint" class="hint"></div>
+            </div>
+            <div class="row"><button class="btn primary" id="btnMatchupSim">POST /matchup/sim</button><button class="btn" id="btnMatchupGet">GET /matchup/sim</button></div>
+          </div>
+          <div class="card"><h3>Matchup Response</h3><pre id="outMatchup" class="out"></pre></div>
+        </div>
+      </section>
+
+      <!-- MODEL -->
+      <section id="tab-model" class="panel" role="tabpanel">
+        <h2>Model</h2>
+        <div class="grid2">
+          <div class="card"><h3>Predict</h3><div class="hint">Use Matchup inputs.</div><div class="row"><button class="btn primary" id="btnPredict">POST /predict</button><button class="btn" id="btnDebugMatchup">Debug Matchup</button><button class="btn" id="btnDebugTeam">Debug Home Team</button></div></div>
+          <div class="card"><h3>Response</h3><pre id="outModel" class="out"></pre></div>
+        </div>
+      </section>
+
+      <!-- LINES -->
+      <section id="tab-lines" class="panel" role="tabpanel"><h2>Lines</h2><div class="card"><div class="row"><button class="btn primary" id="btnLines">GET /game-lines</button><button class="btn" id="btnCopyLinesCurl">Copy cURL</button></div><pre id="outLines" class="out"></pre></div></section>
+
+      <!-- ANCHORS -->
+      <section id="tab-anchors" class="panel" role="tabpanel">
+        <h2>Anchors</h2>
+        <div class="grid2">
+          <div class="card">
+            <h3>NFL Anchors</h3>
+            <div class="grid3"><div><label>Season</label><input id="anchorsSeason" type="number" value="2025" /></div><div><label>Week</label><input id="anchorsWeek" type="text" value="15" /></div></div>
+            <div class="row"><button class="btn primary" id="btnAnchors">GET /anchors/nfl</button><button class="btn" id="btnToday">GET /anchors/today</button><button class="btn" id="btnCopyAnchorsCurl">Copy cURL</button><button class="btn" id="btnCopyTodayCurl">Copy Today cURL</button></div>
+            <hr />
+            <h3>Backtest</h3>
+            <div class="grid3"><div><label>Season</label><input id="btSeason" type="number" value="2025" /></div><div><label>Weeks</label><input id="btWeeks" type="text" value="1-18" /></div></div>
+            <div class="row"><button class="btn" id="btnBacktest">GET /anchors/backtest</button><button class="btn" id="btnCopyBacktestCurl">Copy cURL</button></div>
+            <hr />
+            <h3>Rows</h3><textarea id="rowsBody" class="textarea" rows="9" spellcheck="false">[]</textarea>
+            <div class="row"><button class="btn" id="btnRows">POST /anchors/rows</button><button class="btn" id="btnCopyRowsCurl">Copy cURL</button></div>
+          </div>
+          <div class="card"><h3>Response</h3><pre id="outAnchors" class="out"></pre></div>
+        </div>
+      </section>
+
+      <!-- CAL -->
+      <section id="tab-cal" class="panel" role="tabpanel">
+        <h2>Calibration</h2>
+        <div class="grid2">
+          <div class="card">
+            <h3>Fit / Summary</h3>
+            <div class="grid3"><div><label>Season</label><input id="calSeason" type="number" value="2025" /></div><div><label>Week</label><input id="calWeek" type="text" value="15" /></div></div>
+            <div class="row"><button class="btn primary" id="btnCalFit">GET /cal/fit</button><button class="btn" id="btnCalSummary">GET /cal/summary</button><button class="btn" id="btnCalMetrics">GET /cal/metrics</button><button class="btn" id="btnCopyCalCurl">Copy cURL</button></div>
+            <hr />
+            <h3>Bulk Game Log</h3><textarea id="calBulkBody" class="textarea" rows="10" spellcheck="false">[]</textarea>
+            <div class="row"><button class="btn" id="btnCalBulk">POST /cal/game/log.bulk</button><button class="btn" id="btnCopyCalBulkCurl">Copy cURL</button></div>
+          </div>
+          <div class="card"><h3>Response</h3><pre id="outCal" class="out"></pre></div>
+        </div>
+      </section>
+
+      <!-- PROPS -->
+      <section id="tab-props" class="panel" role="tabpanel">
+        <h2>Props</h2>
+        <div class="grid2">
+          <div class="card">
+            <h3>Upload Props</h3>
+            <div class="hint">POST /props/upload. You can paste raw props text or upload a CSV.</div>
+            <textarea id="propsText" class="textarea" placeholder="Paste props text here..."></textarea>
+            <div class="row"><input id="propsFile" type="file" accept=".csv,text/csv,.txt,text/plain" /></div>
+            <div class="row"><button class="btn primary" id="btnPropsUpload">POST /props/upload</button><button class="btn" id="btnPropsList">GET /props/list</button></div>
+          </div>
+          <div class="card">
+            <h3>Sim / Score</h3>
+            <div class="hint">POST /props/sim. This UI sends multipart (FormData) to avoid OPTIONS preflight.</div>
+            <div class="row"><button class="btn primary" id="btnPropsSim">POST /props/sim</button><button class="btn" id="btnPropsExport">GET /props/export.csv</button></div>
+            <div class="row"><button class="btn" id="btnPropsGrade">GET /props/grade</button><button class="btn" id="btnPropsEval">POST /props/eval</button></div>
+            <div class="hint">If /props/sim still fails with Load failed, your worker needs to answer OPTIONS for that route or allow your UI origin.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- UNIFIED SSOT RUNTIME -->
+      <section id="tab-ssot" class="panel" role="tabpanel" aria-hidden="true">
+        <h2>Unified SSOT · 2025 Reconstruction</h2>
+        <div class="card ssot-gate-card">
+          <div class="row ssot-heading-row">
+            <div>
+              <h3>Safety Gate</h3>
+              <div class="hint">This panel talks directly to the same Brain v8 Worker. The admin token is held only in this browser tab and is never stored in localStorage or written into the UI source.</div>
+            </div>
+            <span id="ssotGateBadge" class="badge">Not checked</span>
+          </div>
+          <div class="grid3">
+            <div style="grid-column:span 2">
+              <label for="ssotAdminToken">SSOT Admin Token</label>
+              <input id="ssotAdminToken" type="password" autocomplete="off" placeholder="Paste current SSOT_ADMIN_TOKEN" />
+            </div>
+            <div class="check ssot-token-controls"><label><input id="ssotShowToken" type="checkbox" /> show token</label></div>
+          </div>
+          <div class="row">
+            <button class="btn primary" id="btnSsotHealth">GET /ssot/health</button>
+            <button class="btn" id="btnSsotBootstrap">POST /ssot/bootstrap</button>
+            <button class="btn" id="btnSsotClearToken">Clear token</button>
+          </div>
+          <pre id="ssotHealthSummary" class="out ssot-mini-out">Run SSOT Health first.</pre>
+        </div>
+
+        <div class="grid2">
+          <div class="card">
+            <h3>Games · Controlled Ingest</h3>
+            <div class="hint">Default safety contract is exactly one BDL call/page and at most 100 rows per click. Reuse the returned run ID to continue from the D1 checkpoint.</div>
+            <div class="grid3"><div><label>Season</label><input id="ssotGamesSeason" type="number" value="2025" /></div><div><label>Season type</label><select id="ssotGamesType"><option value="2" selected>2 · Regular</option><option value="3">3 · Postseason</option></select></div><div><label>Budget ms</label><input id="ssotGamesBudget" type="number" value="30000" /></div></div>
+            <label>Games run ID</label><input id="ssotGamesRunId" type="text" placeholder="filled automatically after first page" spellcheck="false" />
+            <div class="row"><button class="btn primary" id="btnSsotGamesPage">Ingest 1 Games Page</button><button class="btn" id="btnSsotGamesRun">Debug Run</button><button class="btn" id="btnSsotGamesCert">Certify Games</button></div>
+            <pre id="ssotGamesSummary" class="out ssot-mini-out">No Games run yet.</pre>
+          </div>
+
+          <div class="card">
+            <h3>Team Stats · Controlled Ingest</h3>
+            <div class="hint">Run only after Games is fully ingested and certified. Certification requires exactly two canonical team-stat rows for every final game.</div>
+            <div class="grid3"><div><label>Season</label><input id="ssotStatsSeason" type="number" value="2025" /></div><div><label>Season type</label><select id="ssotStatsType"><option value="2" selected>2 · Regular</option><option value="3">3 · Postseason</option></select></div><div><label>Budget ms</label><input id="ssotStatsBudget" type="number" value="30000" /></div></div>
+            <label>Team Stats run ID</label><input id="ssotStatsRunId" type="text" placeholder="filled automatically after first page" spellcheck="false" />
+            <div class="row"><button class="btn primary" id="btnSsotStatsPage">Ingest 1 Team Stats Page</button><button class="btn" id="btnSsotStatsRun">Debug Run</button><button class="btn" id="btnSsotStatsCert">Certify Team Stats</button></div>
+            <pre id="ssotStatsSummary" class="out ssot-mini-out">No Team Stats run yet.</pre>
+          </div>
+
+          <div class="card">
+            <h3>Season Audit</h3>
+            <div class="hint">Read-only D1 audit. This does not require the admin token.</div>
+            <div class="grid3"><div><label>Season</label><input id="ssotAuditSeason" type="number" value="2025" /></div></div>
+            <div class="row"><button class="btn primary" id="btnSsotAudit">GET Season Audit</button><button class="btn" id="btnSsotAuditExport">Export Audit JSON</button></div>
+            <pre id="ssotAuditSummary" class="out ssot-mini-out">No season audit run yet.</pre>
+          </div>
+
+          <div class="card">
+            <h3>Game Debug</h3>
+            <div class="hint">Read one canonical game plus its stored Team Stats from D1 using the BDL game ID.</div>
+            <div class="grid3"><div><label>BDL game ID</label><input id="ssotDebugGameId" type="number" placeholder="e.g. 12345" /></div></div>
+            <div class="row"><button class="btn" id="btnSsotDebugGame">GET Debug Game</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- OPERATIONS -->
+      <section id="tab-ops" class="panel" role="tabpanel" aria-hidden="true">
+        <h2>Operations · Full Worker Reach</h2>
+        <div class="grid2">
+          <div class="card">
+            <h3>Quick SSOT / Pipeline Checks</h3>
+            <div class="hint">These call Brain v8 directly. No model math is duplicated in Pages.</div>
+            <div class="row"><button class="btn" data-op-path="/schema/check?season=2025&week=17">Schema Check</button><button class="btn" data-op-path="/audit/league?season=2025&week=17">League Audit</button><button class="btn" data-op-path="/kv/list">KV List</button><button class="btn" data-op-path="/edges/games">Game Edges</button></div>
+            <div class="row"><button class="btn" data-op-path="/cal/fit/latest?season=2025">Latest Cal Fit</button><button class="btn" data-op-path="/cal/metrics?season=2025">Cal Metrics</button><button class="btn" data-op-path="/cal/game/list?season=2025">Cal Game List</button></div>
+            <div class="row"><button class="btn" data-op-path="/injuries/build?season=2025&week=1&source=bdl">Build Injuries</button><button class="btn" data-op-path="/injuries/all?season=2025&week=1&source=bdl">All Injuries</button><button class="btn" data-op-path="/prefetch/batch?season=2025&week=1&source=bdl&window=all">Prefetch Batch</button></div>
+          </div>
+
+          <div class="card">
+            <h3>KV Archaeology · 2025 Recovery</h3>
+            <div class="hint">Read-only scan of the Worker's currently bound RTP_CACHE. This does not mutate calibration or Team Well data.</div>
+            <div class="row"><button class="btn primary" id="btnKvRecoveryScan">Run 2025 Recovery Scan</button><button class="btn" id="btnKvCalfit">List calfit:</button><button class="btn" id="btnKvCalgames">List calgame:2025:</button></div>
+            <div class="row"><button class="btn" id="btnKvWeights">List weights:nfl:2025:</button><button class="btn" id="btnKvTeamstats">List teamstats:</button><button class="btn" id="btnKvExport">Export Last Scan JSON</button></div>
+            <div class="hint">Highest-value recovery targets: <code>calfit:2025</code>, <code>calgame:2025:*</code>, <code>weights:nfl:2025:*</code>, and any surviving <code>teamstats:*</code>.</div>
+            <pre id="kvRecoverySummary" class="out">No recovery scan run yet.</pre>
+          </div>
+
+          <div class="card">
+            <h3>Legacy Snapshot Hunter · 2025</h3>
+            <div class="hint">Read-only archaeology for the old Brain v2 snapshot system and durable Brain v8 market-line archive.</div>
+            <div class="row"><button class="btn primary" id="btnSnapshotHunt">Run Legacy Snapshot Hunt</button><button class="btn" id="btnSnapshotExport">Export Snapshot Hunt JSON</button></div>
+            <div class="row"><button class="btn" id="btnListSnap">List snap:</button><button class="btn" id="btnListSnapIdx">List snap_idx:</button><button class="btn" id="btnListClose">List close:</button><button class="btn" id="btnListClv">List clv:</button><button class="btn" id="btnListCalLines">List cal:v1:lines:2025:</button></div>
+            <pre id="snapshotHuntSummary" class="out">No legacy snapshot hunt run yet.</pre>
+          </div>
+
+          <div class="card">
+            <h3>Worker Endpoint Console</h3>
+            <div class="hint">Use this for any Brain v8 route not yet promoted to a first-class card.</div>
+            <div class="grid3"><div><label>Method</label><select id="opsMethod"><option>GET</option><option>POST</option></select></div><div style="grid-column:span 2"><label>Path + query</label><input id="opsPath" type="text" value="/schema/check?season=2025&week=17" spellcheck="false" /></div></div>
+            <label>JSON body (POST only)</label><textarea id="opsBody" class="textarea" rows="10" spellcheck="false" placeholder='{"season":2025}'></textarea>
+            <div class="row"><button class="btn primary" id="btnOpsRun">Run Endpoint</button><button class="btn" id="btnOpsCurl">Copy cURL</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- LOGS -->
+      <section id="tab-logs" class="panel" role="tabpanel"><h2>Logs</h2><div class="card"><div class="row"><button class="btn" id="btnClear">Clear</button><button class="btn" id="btnCopy">Copy</button></div><pre id="log" class="log"></pre></div></section>
+
+      <section class="output"><h2>Response</h2><pre id="out" class="out"></pre></section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

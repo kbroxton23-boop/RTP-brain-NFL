@@ -1,0 +1,69 @@
+SOT_ADMIN_TOKEN: e.SSOT_ADMIN_TOKEN ?? "",
++    MATEO_INJURY_URL: e.MATEO_INJURY_URL ?? (typeof MATEO_INJURY_URL !== "undefined" ? MATEO_INJURY_URL : ""),
++    MATEO_API_KEY: e.MATEO_API_KEY ?? (typeof MATEO_API_KEY !== "undefined" ? MATEO_API_KEY : "")
+   };
+ }
+ 
+@@ -9724,14 +10143,10 @@
+   return { level, score, tags };
+ }
+ 
+-addEventListener("fetch", event => {
+-  event.respondWith(handleFetch(event));
+-});
+-
+-async function handleFetch(event) {
++async function handleFetch(event, explicitEnv = null) {
+   const req = event.request;
+-  const ctx = event; // crude but enough for waitUntil if you ever use it
+-  const env = getEnvShim();
++  const ctx = event;
++  const env = getEnvShim(explicitEnv);
+ 
+   const url = new URL(req.url);
+   const reqOrigin = normalizeOrigin(req.headers.get("origin") || "");
+@@ -9837,6 +10252,10 @@
+       return handleKvList(req, env, origin);
+     }
+ 
++    if (pathname.startsWith("/ssot/")) {
++      return handleSsot(req, env, origin, pathname, url);
++    }
++
+     if (pathname === "/game-lines" && req.method === "GET") {
+       return handleGameLinesGet(req, env, origin);
+     }
+@@ -10059,15 +10478,30 @@
+     const prefix = url.searchParams.get("prefix") || "";
+     const limit = Math.min(2000, Math.max(1, Number(url.searchParams.get("limit") || 200)));
+     if (!prefix) {
+-      return jsonResponse({ ok: false, data: null, meta: { build: BUILD }, error: "kv_list:missing_prefix" }, 400, origin);
++      return jsonResponse(400, { ok: false, data: null, meta: { build: BUILD }, error: "kv_list:missing_prefix" }, origin);
+     }
+     const keysObj = await listAllKeys(env, prefix);
+     const names = Array.isArray(keysObj) ? keysObj.map(k => (typeof k === "string" ? k : (k && k.name) ? k.name : String(k))) : [];
+     const out = names.slice(0, limit);
+-    return jsonResponse({ ok: true, data: { prefix, count: names.length, items: out }, meta: { build: BUILD } , error: null }, 200, origin);
++    return jsonResponse(200, { ok: true, data: { prefix, count: names.length, items: out }, meta: { build: BUILD } , error: null }, origin);
+   } catch (e) {
+-    return jsonResponse({ ok: false, data: null, meta: { build: BUILD }, error: "kv_list:" + String(e && e.message ? e.message : e) }, 500, origin);
++    return jsonResponse(500, { ok: false, data: null, meta: { build: BUILD }, error: "kv_list:" + String(e && e.message ? e.message : e) }, origin);
+   }
+ }
+ // === END OF WORKER (v25.validated) ===
+ 
++// ES module entrypoint required for D1 bindings. Existing request handler logic is preserved.
++export default {
++  async fetch(request, env, ctx) {
++    return handleFetch({ request, waitUntil: (promise) => ctx.waitUntil(promise) }, env);
++  }
++};
++
++export const __RTP_SSOT_TEST = {
++  canonicalGameId: ssotCanonicalGameId,
++  normalizeGame: ssotNormalizeGame,
++  normalizeTeamStat: ssotNormalizeTeamStat,
++  stableStringify: ssotStableStringify,
++  rawKey: ssotRawKey,
++  schemaVersion: NFL_SSOT_SCHEMA_VERSION
++};
