@@ -21,10 +21,10 @@ test("team stat identity derives side/opponent",()=>{
 });
 test("stable serialization is deterministic",()=>assert.equal(ssot.stableStringify({b:2,a:1}),ssot.stableStringify({a:1,b:2})));
 test("raw archive key is deterministic",()=>assert.equal(ssot.rawKey("games",2025,2,null,"abc"),"raw/bdl/nfl/v1/games/season=2025/season_type=2/cursor=START/abc.json"));
-test("legacy health survives module migration and exposes unified SSOT routes",async()=>{
+test("legacy health survives module migration and exposes SSOT routes",async()=>{
   const env={RTP_CACHE:{},UI_ORIGIN:"",BDL_NFL_API_KEY:"x"};
   const res=await worker.fetch(new Request("https://example.test/health"),env,{waitUntil(){}});
-  assert.equal(res.status,200); const body=await res.json(); assert.equal(body.ok,true); assert.match(body.meta.build,/unified-ssot-v1/); assert.ok(body.data.routes.includes("/matchup/sim")); assert.ok(body.data.routes.includes("/ssot/health"));
+  assert.equal(res.status,200); const body=await res.json(); assert.equal(body.ok,true); assert.match(body.meta.build,/(unified|intelligence)-ssot-v1/); assert.ok(body.data.routes.includes("/matchup/sim")); assert.ok(body.data.routes.includes("/ssot/health"));
 });
 test("ssot health reports unbound D1/R2 without breaking main Worker",async()=>{
   const env={RTP_CACHE:{},UI_ORIGIN:"",BDL_NFL_API_KEY:"x"};
