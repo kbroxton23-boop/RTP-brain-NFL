@@ -1,0 +1,49 @@
++ play_id,game_id,bdl_game_id,season,week,season_type,period,clock,play_type,text,short_text,scoring_play,team_id,team_abbr,start_down,start_distance,start_yards_to_endzone,end_down,end_distance,end_yards_to_endzone,stat_yardage,home_win_probability,wallclock,play_json,source,observed_at,ingested_at,payload_hash,raw_r2_key,schema_version,build
++) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
++ON CONFLICT(play_id) DO UPDATE SET text=excluded.text,short_text=excluded.short_text,scoring_play=excluded.scoring_play,team_id=excluded.team_id,team_abbr=excluded.team_abbr,start_down=excluded.start_down,start_distance=excluded.start_distance,start_yards_to_endzone=excluded.start_yards_to_endzone,end_down=excluded.end_down,end_distance=excluded.end_distance,end_yards_to_endzone=excluded.end_yards_to_endzone,stat_yardage=excluded.stat_yardage,home_win_probability=excluded.home_win_probability,wallclock=excluded.wallclock,play_json=excluded.play_json,observed_at=excluded.observed_at,ingested_at=excluded.ingested_at,payload_hash=excluded.payload_hash,raw_r2_key=excluded.raw_r2_key,schema_version=excluded.schema_version,build=excluded.build`;
++const SSOT_ADV_UPSERT = `INSERT INTO nfl_player_advanced_stats (
++ family,season,week,season_type,player_id,player_name,position_abbreviation,payload_json,source,observed_at,ingested_at,payload_hash,raw_r2_key,schema_version,build
++) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
++ON CONFLICT(family,season,week,season_type,player_id) DO UPDATE SET player_name=excluded.player_name,position_abbreviation=excluded.position_abbreviation,payload_json=excluded.payload_json,observed_at=excluded.observed_at,ingested_at=excluded.ingested_at,payload_hash=excluded.payload_hash,raw_r2_key=excluded.raw_r2_key,schema_version=excluded.schema_version,build=excluded.build`;
++async function ssotUpsertPlayerRow(env, player, archive) {
++  const hash = await ssotSha256(player);
++  await env.NFL_DB.prepare(SSOT_PLAYER_UPSERT).bind(
++    player.player_id,player.first_name,player.last_name,player.player_name,player.position,player.position_abbreviation,player.height,player.weight,player.jersey_number,player.college,player.experience,player.age,player.current_team_id,player.current_team_abbr,player.source,player.observed_at,player.ingested_at,hash,archive?.raw_r2_key || null,player.schema_version,player.build
++  ).run();
++}
++async function ssotUpsertIntelligenceRows(env, phase, rows, archive) {
++  let stored = 0;
++  for (const row of rows) {
++    if (row?.player) await ssotUpsertPlayerRow(env,row.player,archive);
++    const hash = await ssotSha256(row);
++    if (phase === "player_stats") {
++      await env.NFL_DB.prepare(SSOT_PLAYER_STAT_UPSERT).bind(
++        row.game_id,row.bdl_game_id,row.season,row.week,row.season_type,row.player_id,row.team_id,row.team_abbr,row.player_name,row.position_abbreviation,row.passing_attempts,row.passing_completions,row.passing_yards,row.passing_touchdowns,row.interceptions,row.rushing_attempts,row.rushing_yards,row.rushing_touchdowns,row.targets,row.receptions,row.receiving_yards,row.receiving_touchdowns,row.fumbles_lost,row.total_points,row.stats_json,row.source,row.observed_at,row.ingested_at,hash,archive.raw_r2_key,row.schema_version,row.build
++      ).run();
++    } else if (phase === "plays") {
++      await env.NFL_DB.prepare(SSOT_PLAY_UPSERT).bind(
++        row.play_id,row.game_id,row.bdl_game_id,row.season,row.week,row.season_type,row.period,row.clock,row.play_type,row.text,row.short_text,row.scoring_play,row.team_id,row.team_abbr,row.start_down,row.start_distance,row.start_yards_to_endzone,row.end_down,row.end_distance,row.end_yards_to_endzone,row.stat_yardage,row.home_win_probability,row.wallclock,row.play_json,row.source,row.observed_at,row.ingested_at,hash,archive.raw_r2_key,row.schema_version,row.build
++      ).run();
++    } else if (phase === "injuries") {
++      const snapshotId = await ssotSha256(`${row.player_id}|${row.status||""}|${row.source_date||""}|${row.comment||""}`);
++      await env.NFL_DB.prepare(`INSERT OR IGNORE INTO nfl_injury_snapshots (snapshot_id,player_id,team_id,team_abbr,player_name,position_abbreviation,status,comment,source_date,payload_json,source,observed_at,ingested_at,payload_hash,raw_r2_key,schema_version,build) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
++        .bind(snapshotId,row.player_id,row.team_id,row.team_abbr,row.player_name,row.position_abbreviation,row.status,row.comment,row.source_date,row.payload_json,row.source,row.observed_at,row.ingested_at,hash,archive.raw_r2_key,row.schema_version,row.build).run();
++    } else if (phase.startsWith("advanced_")) {
++      await env.NFL_DB.prepare(SSOT_ADV_UPSERT).bind(
++        row.family,row.season,row.week,row.season_type,row.player_id,row.player_name,row.position_abbreviation,row.payload_json,row.source,row.observed_at,row.ingested_at,hash,archive.raw_r2_key,row.schema_version,row.build
++      ).run();
++    } else throw new Error("ssot_intelligence_unknown_phase");
++    stored += 1;
++  }
++  return stored;
++}
++async function ssotRunIntelligencePaged(env, body, phase) {
++  ssotRequireBindings(env,true);
++  let season = ssotSeason(body?.season);
++  let seasonType = ssotSeasonType(body?.season_type);
++  const budget = ssotBudget(body), now = new Date().toISOString();
++  let runId = ssotText(body?.run_id) || `ssot-${phase}-${season}-t${seasonType}-${crypto.randomUUID()}`;
++  let prior = body?.run_id ? await ssotGetRun(env,runId) : null;
++  let cursor = body?.cursor ?? prior?.cursor ?? null;
++  let processedPages=Number(prior?.processed_pages||0), fetchedRows=Number(prior?.fetched_rows||0), storedRows=Number(prior?.stored_rows||0), errors=Number(prior?.error_count||0);
++  const startedAt=prior?.started_at||now;
