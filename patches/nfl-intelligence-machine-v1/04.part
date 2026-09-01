@@ -1,0 +1,49 @@
++    end_down:ssotInt(play?.end_down), end_distance:ssotInt(play?.end_distance), end_yards_to_endzone:ssotInt(play?.end_yards_to_endzone),
++    stat_yardage:ssotNum(play?.stat_yardage), home_win_probability:ssotNum(play?.home_win_probability), wallclock:ssotText(play?.wallclock),
++    play_json:JSON.stringify(play), source:NFL_SSOT_PROVIDER, observed_at:observedAt, ingested_at:observedAt,
++    schema_version:NFL_SSOT_SCHEMA_VERSION, build:BUILD
++  };
++}
++function ssotNormalizeInjury(row, observedAt) {
++  const player = row?.player || {}, team = player?.team || row?.team || {};
++  const playerId = ssotInt(player?.id);
++  if (!playerId) throw new Error("ssot_injury_missing_player_id");
++  return {
++    player_id:playerId, team_id:ssotInt(team?.id), team_abbr:ssotText(team?.abbreviation)?.toUpperCase() || null,
++    player_name:ssotPlayerName(player), position_abbreviation:ssotText(player?.position_abbreviation),
++    status:ssotText(row?.status), comment:ssotText(row?.comment), source_date:ssotText(row?.date),
++    payload_json:JSON.stringify(row), source:NFL_SSOT_PROVIDER, observed_at:observedAt, ingested_at:observedAt,
++    schema_version:NFL_SSOT_SCHEMA_VERSION, build:BUILD, player:ssotNormalizePlayer(player,observedAt)
++  };
++}
++function ssotNormalizeAdvanced(row, family, season, seasonType, week, observedAt) {
++  const player = row?.player || {};
++  const playerId = ssotInt(player?.id);
++  if (!playerId) throw new Error("ssot_advanced_missing_player_id");
++  return {
++    family, season:ssotSeason(row?.season ?? season), week:ssotInt(row?.week, ssotInt(week,0)) ?? 0, season_type:seasonType,
++    player_id:playerId, player_name:ssotPlayerName(player), position_abbreviation:ssotText(player?.position_abbreviation),
++    payload_json:JSON.stringify(row), source:NFL_SSOT_PROVIDER, observed_at:observedAt, ingested_at:observedAt,
++    schema_version:NFL_SSOT_SCHEMA_VERSION, build:BUILD, player:ssotNormalizePlayer(player,observedAt)
++  };
++}
++function ssotRawScopeKey(phase, season, seasonType, scope, cursor, hash) {
++  const c = cursor === null || cursor === undefined || cursor === "" ? "START" : encodeURIComponent(String(cursor));
++  const s = scope ? `/${encodeURIComponent(String(scope))}` : "";
++  return `raw/bdl/nfl/v1/${phase}/season=${season}/season_type=${seasonType}${s}/cursor=${c}/${hash}.json`;
++}
++async function ssotArchiveScopedPage(env, phase, season, seasonType, scope, cursor, rawText) {
++  const hash = await ssotSha256(rawText);
++  const key = ssotRawScopeKey(phase, season, seasonType, scope, cursor, hash);
++  await env.NFL_RAW.put(key, rawText, { httpMetadata:{contentType:"application/json"}, customMetadata:{provider:NFL_SSOT_PROVIDER,phase,season:String(season),season_type:String(seasonType),scope:String(scope||""),build:BUILD} });
++  return { payload_hash:hash, raw_r2_key:key };
++}
++const SSOT_PLAYER_UPSERT = `INSERT INTO nfl_players (
++ player_id,first_name,last_name,player_name,position,position_abbreviation,height,weight,jersey_number,college,experience,age,current_team_id,current_team_abbr,source,observed_at,ingested_at,payload_hash,raw_r2_key,schema_version,build
++) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
++ON CONFLICT(player_id) DO UPDATE SET first_name=excluded.first_name,last_name=excluded.last_name,player_name=excluded.player_name,position=excluded.position,position_abbreviation=excluded.position_abbreviation,height=excluded.height,weight=excluded.weight,jersey_number=excluded.jersey_number,college=excluded.college,experience=excluded.experience,age=excluded.age,current_team_id=COALESCE(excluded.current_team_id,nfl_players.current_team_id),current_team_abbr=COALESCE(excluded.current_team_abbr,nfl_players.current_team_abbr),observed_at=excluded.observed_at,ingested_at=excluded.ingested_at,payload_hash=excluded.payload_hash,raw_r2_key=excluded.raw_r2_key,schema_version=excluded.schema_version,build=excluded.build`;
++const SSOT_PLAYER_STAT_UPSERT = `INSERT INTO nfl_player_game_stats (
++ game_id,bdl_game_id,season,week,season_type,player_id,team_id,team_abbr,player_name,position_abbreviation,passing_attempts,passing_completions,passing_yards,passing_touchdowns,interceptions,rushing_attempts,rushing_yards,rushing_touchdowns,targets,receptions,receiving_yards,receiving_touchdowns,fumbles_lost,total_points,stats_json,source,observed_at,ingested_at,payload_hash,raw_r2_key,schema_version,build
++) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
++ON CONFLICT(game_id,player_id) DO UPDATE SET team_id=excluded.team_id,team_abbr=excluded.team_abbr,player_name=excluded.player_name,position_abbreviation=excluded.position_abbreviation,passing_attempts=excluded.passing_attempts,passing_completions=excluded.passing_completions,passing_yards=excluded.passing_yards,passing_touchdowns=excluded.passing_touchdowns,interceptions=excluded.interceptions,rushing_attempts=excluded.rushing_attempts,rushing_yards=excluded.rushing_yards,rushing_touchdowns=excluded.rushing_touchdowns,targets=excluded.targets,receptions=excluded.receptions,receiving_yards=excluded.receiving_yards,receiving_touchdowns=excluded.receiving_touchdowns,fumbles_lost=excluded.fumbles_lost,total_points=excluded.total_points,stats_json=excluded.stats_json,observed_at=excluded.observed_at,ingested_at=excluded.ingested_at,payload_hash=excluded.payload_hash,raw_r2_key=excluded.raw_r2_key,schema_version=excluded.schema_version,build=excluded.build`;
++const SSOT_PLAY_UPSERT = `INSERT INTO nfl_plays (
