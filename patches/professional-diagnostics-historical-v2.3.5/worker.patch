@@ -1,0 +1,17 @@
+*** Begin Patch
+*** Update File: current deployed v2.3.4.3 worker
+@@
+-const BUILD = "elite-v8-p12f-intelligence-control-serviceplane-v2.3.4.3-bdl-pagination-safe";
++const BUILD = "elite-v8-p12f-intelligence-professional-diagnostics-historical-v2.3.5";
+@@
+-      {id:"player_stats",kind:"paged",phase:"player_stats",label:"Player Stats"},
++      {id:"player_stats",kind:"paged",phase:"player_stats",label:"Player Stats"},
++      {id:"rosters",kind:"rosters",label:"Historical Rosters"},
+@@
++Adds private diagnostic endpoints `/debug/doctor`, `/debug/d1/schema`, `/debug/pipeline`, `/debug/provider`, `/debug/routes`, `/debug/events`, `/debug/bindings`.
++Adds D1-safe `nfl_debug_events` ledger and x-rtp-request-id / x-rtp-build / x-rtp-diag-version / x-rtp-duration-ms response headers.
++Adds `GET /control/historical/preflight?season=2025&season_type=2` and fail-closed historical start preflight.
++Preserves queue continuation_token + dispatch_pending recovery and model_math_mutated:false.
+*** End Patch
+
+NOTE: The exact deployable worker is packaged in the conversation artifact `NFL_Brain_v8_Professional_Diagnostics_Historical_v2.3.5.js`. This repository note documents the candidate contract while the existing deterministic patch/CI chain is updated in a later commit.
