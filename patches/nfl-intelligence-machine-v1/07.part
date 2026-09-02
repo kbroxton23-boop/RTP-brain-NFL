@@ -1,0 +1,48 @@
++  const cov=await env.NFL_DB.prepare("SELECT COUNT(DISTINCT s.bdl_game_id) n FROM nfl_player_game_stats s JOIN nfl_games g ON g.bdl_game_id=s.bdl_game_id WHERE g.season=? AND g.season_type=? AND g.status_state='final'").bind(season,seasonType).first();
++  const invalid=await env.NFL_DB.prepare("SELECT COUNT(*) n FROM nfl_player_game_stats WHERE season=? AND season_type=? AND (player_id IS NULL OR bdl_game_id IS NULL)").bind(season,seasonType).first();
++  const expected=Number(fg?.n||0),found=Number(cov?.n||0),bad=Number(invalid?.n||0),missing=Math.max(0,expected-found),certified=expected>0&&missing===0&&bad===0;
++  const c={cert_key:`player_stats:${season}:t${seasonType}`,season,season_type:seasonType,phase:"player_stats",complete:certified,certified,expected_rows:expected,found_rows:found,missing_rows:missing,invalid_rows:bad,assessed_at:new Date().toISOString(),details:{authority:"at_least_one_player_stat_row_per_final_game"}};
++  await ssotUpsertCertification(env,c); return c;
++}
++async function ssotCertifyPlays(env, season, seasonType) {
++  season=ssotSeason(season); seasonType=ssotSeasonType(seasonType);
++  const fg=await env.NFL_DB.prepare("SELECT COUNT(*) n FROM nfl_games WHERE season=? AND season_type=? AND status_state='final'").bind(season,seasonType).first();
++  const cov=await env.NFL_DB.prepare("SELECT COUNT(DISTINCT p.bdl_game_id) n FROM nfl_plays p JOIN nfl_games g ON g.bdl_game_id=p.bdl_game_id WHERE g.season=? AND g.season_type=? AND g.status_state='final'").bind(season,seasonType).first();
++  const invalid=await env.NFL_DB.prepare("SELECT COUNT(*) n FROM nfl_plays WHERE season=? AND season_type=? AND (play_id IS NULL OR bdl_game_id IS NULL)").bind(season,seasonType).first();
++  const expected=Number(fg?.n||0),found=Number(cov?.n||0),bad=Number(invalid?.n||0),missing=Math.max(0,expected-found),certified=expected>0&&missing===0&&bad===0;
++  const c={cert_key:`plays:${season}:t${seasonType}`,season,season_type:seasonType,phase:"plays",complete:certified,certified,expected_rows:expected,found_rows:found,missing_rows:missing,invalid_rows:bad,assessed_at:new Date().toISOString(),details:{authority:"at_least_one_play_row_per_final_game"}};
++  await ssotUpsertCertification(env,c); return c;
++}
++async function ssotIntelligenceAudit(env, season) {
++  season=ssotSeason(season);
++  const playerStats=await env.NFL_DB.prepare("SELECT season_type,COUNT(*) rows,COUNT(DISTINCT player_id) players,COUNT(DISTINCT bdl_game_id) games FROM nfl_player_game_stats WHERE season=? GROUP BY season_type").bind(season).all();
++  const plays=await env.NFL_DB.prepare("SELECT season_type,COUNT(*) rows,COUNT(DISTINCT bdl_game_id) games FROM nfl_plays WHERE season=? GROUP BY season_type").bind(season).all();
++  const roster=await env.NFL_DB.prepare("SELECT COUNT(*) rows,COUNT(DISTINCT team_id) teams,COUNT(DISTINCT player_id) players FROM nfl_rosters WHERE season=?").bind(season).first();
++  const adv=await env.NFL_DB.prepare("SELECT family,week,COUNT(*) rows,COUNT(DISTINCT player_id) players FROM nfl_player_advanced_stats WHERE season=? GROUP BY family,week ORDER BY family,week").bind(season).all();
++  const injuries=await env.NFL_DB.prepare("SELECT COUNT(*) rows,COUNT(DISTINCT player_id) players,MAX(source_date) latest_source_date FROM nfl_injury_snapshots").first();
++  const caps=await env.NFL_DB.prepare("SELECT * FROM nfl_bdl_capabilities ORDER BY endpoint_key").all();
++  return {season,player_stats:playerStats.results||[],plays:plays.results||[],roster:roster||{},advanced:adv.results||[],injuries:injuries||{},capabilities:caps.results||[],build:BUILD,model_math_mutated:false};
++}
++
+ async function ssotGetRun(env, runId) { return await env.NFL_DB.prepare("SELECT * FROM nfl_ssot_runs WHERE run_id=?").bind(runId).first(); }
+ async function ssotSaveRun(env, r) {
+   await env.NFL_DB.prepare(`INSERT INTO nfl_ssot_runs (run_id,phase,season,season_type,status,cursor,processed_pages,fetched_rows,stored_rows,error_count,started_at,updated_at,completed_at,checkpoint_json,build)
+@@ -9727,6 +10246,24 @@
+     const game=await env.NFL_DB.prepare("SELECT * FROM nfl_games WHERE bdl_game_id=?").bind(id).first(); if(!game) return fail("ssot_game_not_found",404,{},origin);
+     const stats=await env.NFL_DB.prepare("SELECT * FROM nfl_team_game_stats WHERE game_id=? ORDER BY home_away").bind(game.game_id).all(); return ok({game,team_stats:stats.results||[]},{},origin);
+   }
++  if (pathname === "/ssot/capabilities/bdl" && req.method === "GET") {
++    const result=await ssotBdlCapabilities(req,env,url);
++    if(result?.auth_error) return fail(result.auth_error.error,result.auth_error.status,{},origin);
++    return ok(result,{},origin);
++  }
++  if (pathname === "/ssot/audit/intelligence" && req.method === "GET") {
++    if(!env?.NFL_DB) return fail("ssot_missing_NFL_DB_binding",500,{},origin);
++    return ok(await ssotIntelligenceAudit(env,url.searchParams.get("season")||2025),{},origin);
++  }
++  if (pathname === "/ssot/debug/player" && req.method === "GET") {
++    if(!env?.NFL_DB) return fail("ssot_missing_NFL_DB_binding",500,{},origin);
++    const playerId=ssotInt(url.searchParams.get("player_id")); if(!playerId) return fail("ssot_invalid_player_id",400,{},origin);
++    const player=await env.NFL_DB.prepare("SELECT * FROM nfl_players WHERE player_id=?").bind(playerId).first(); if(!player) return fail("ssot_player_not_found",404,{},origin);
++    const stats=await env.NFL_DB.prepare("SELECT * FROM nfl_player_game_stats WHERE player_id=? ORDER BY season DESC,week DESC LIMIT 50").bind(playerId).all();
++    const adv=await env.NFL_DB.prepare("SELECT * FROM nfl_player_advanced_stats WHERE player_id=? ORDER BY season DESC,week DESC,family LIMIT 50").bind(playerId).all();

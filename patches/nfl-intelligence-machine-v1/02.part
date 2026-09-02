@@ -1,0 +1,111 @@
++  payload_hash TEXT NOT NULL,
++  raw_r2_key TEXT NOT NULL,
++  schema_version TEXT NOT NULL,
++  build TEXT NOT NULL,
++  PRIMARY KEY (family, season, week, season_type, player_id)
++);
++CREATE INDEX IF NOT EXISTS idx_nfl_adv_player ON nfl_player_advanced_stats(player_id, season, week);
++CREATE INDEX IF NOT EXISTS idx_nfl_adv_family ON nfl_player_advanced_stats(family, season, week);
++
++CREATE TABLE IF NOT EXISTS nfl_bdl_capabilities (
++  endpoint_key TEXT PRIMARY KEY,
++  required_tier TEXT NOT NULL,
++  accessible INTEGER,
++  http_status INTEGER,
++  checked_at TEXT NOT NULL,
++  details_json TEXT,
++  build TEXT NOT NULL
++);
++
+ CREATE TABLE IF NOT EXISTS nfl_ssot_runs (
+   run_id TEXT PRIMARY KEY,
+   phase TEXT NOT NULL,
+@@ -9582,7 +9768,7 @@
+ async function ssotBdlPage(env, endpoint, { season, seasonType, cursor = null }) {
+   const url = new URL(`https://api.balldontlie.io/nfl/v1/${endpoint}`);
+   url.searchParams.append("seasons[]", String(season));
+-  url.searchParams.append("season_type[]", String(seasonType));
++  url.searchParams.set("season_type", String(seasonType));
+   url.searchParams.set("per_page", "100");
+   if (cursor !== null && cursor !== undefined && cursor !== "") url.searchParams.set("cursor", String(cursor));
+   const res = await fetch(url, { headers: { Authorization: env.BDL_NFL_API_KEY, Accept: "application/json" } });
+@@ -9628,6 +9814,339 @@
+   }
+   return stored;
+ }
++
++async function ssotBdlGenericPage(env, endpoint, params = {}) {
++  if (!env?.BDL_NFL_API_KEY) throw new Error("ssot_missing_BDL_NFL_API_KEY");
++  const url = new URL(`https://api.balldontlie.io/nfl/v1/${endpoint}`);
++  for (const [key, value] of Object.entries(params || {})) {
++    if (value === null || value === undefined || value === "") continue;
++    if (Array.isArray(value)) {
++      for (const item of value) url.searchParams.append(`${key}[]`, String(item));
++    } else {
++      url.searchParams.set(key, String(value));
++    }
++  }
++  const res = await fetch(url, { headers: { Authorization: env.BDL_NFL_API_KEY, Accept: "application/json" } });
++  const rawText = await res.text();
++  const payload = safeJsonParse(rawText);
++  if (!res.ok) {
++    const detail = ssotText(payload?.error || payload?.message, "unknown");
++    const e = new Error(`ssot_bdl_${endpoint.replaceAll("/","_")}_http_${res.status}:${detail}`);
++    e.http_status = res.status;
++    throw e;
++  }
++  if (!payload || !Array.isArray(payload.data)) throw new Error(`ssot_bdl_${endpoint.replaceAll("/","_")}_invalid_payload`);
++  return { data: payload.data, next_cursor: payload?.meta?.next_cursor ?? null, raw_text: rawText, status: res.status };
++}
++async function ssotBdlProbe(env, endpointKey, requiredTier, endpoint, params = {}) {
++  const checkedAt = new Date().toISOString();
++  const url = new URL(`https://api.balldontlie.io/nfl/v1/${endpoint}`);
++  for (const [key, value] of Object.entries(params || {})) {
++    if (value === null || value === undefined || value === "") continue;
++    if (Array.isArray(value)) for (const item of value) url.searchParams.append(`${key}[]`, String(item));
++    else url.searchParams.set(key, String(value));
++  }
++  let status = 0, accessible = null, detail = null, sampleCount = null;
++  try {
++    const res = await fetch(url, { headers: { Authorization: env.BDL_NFL_API_KEY, Accept: "application/json" } });
++    status = res.status;
++    const text = await res.text();
++    const payload = safeJsonParse(text);
++    sampleCount = Array.isArray(payload?.data) ? payload.data.length : null;
++    if (res.ok) accessible = true;
++    else if ([401,403,404].includes(res.status)) accessible = false;
++    else accessible = null;
++    detail = ssotText(payload?.error || payload?.message || res.statusText, null);
++  } catch (e) {
++    accessible = null;
++    detail = String(e?.message || e);
++  }
++  return { endpoint_key: endpointKey, required_tier: requiredTier, accessible, http_status: status, checked_at: checkedAt, sample_count: sampleCount, detail };
++}
++async function ssotPersistCapabilities(env, rows) {
++  if (!env?.NFL_DB) return;
++  for (const r of rows) {
++    try {
++      await env.NFL_DB.prepare(`INSERT INTO nfl_bdl_capabilities (endpoint_key,required_tier,accessible,http_status,checked_at,details_json,build)
++        VALUES (?,?,?,?,?,?,?)
++        ON CONFLICT(endpoint_key) DO UPDATE SET required_tier=excluded.required_tier,accessible=excluded.accessible,http_status=excluded.http_status,checked_at=excluded.checked_at,details_json=excluded.details_json,build=excluded.build`)
++        .bind(r.endpoint_key,r.required_tier,r.accessible === null ? null : (r.accessible ? 1 : 0),r.http_status,r.checked_at,JSON.stringify({sample_count:r.sample_count,detail:r.detail}),BUILD).run();
++    } catch (_) {}
++  }
++}
++async function ssotBdlCapabilities(req, env, url) {
++  const auth = await ssotRequireAdmin(req, env);
++  if (!auth.ok) return { auth_error: auth };
++  if (!env?.BDL_NFL_API_KEY) throw new Error("ssot_missing_BDL_NFL_API_KEY");
++  const group = ssotText(url.searchParams.get("group"), "core").toLowerCase();
++  const season = ssotSeason(url.searchParams.get("season") || 2025);
++  const rows = [];
++  let seedGameId = null;
++
++  if (group === "core") {
++    rows.push(await ssotBdlProbe(env,"games","FREE","games",{seasons:[season],per_page:1}));
++    rows.push(await ssotBdlProbe(env,"player_injuries","ALL-STAR","player_injuries",{per_page:1}));
++    rows.push(await ssotBdlProbe(env,"active_players","ALL-STAR","players/active",{per_page:1}));
++    rows.push(await ssotBdlProbe(env,"player_stats","ALL-STAR","stats",{seasons:[season],season_type:2,per_page:1}));
++    rows.push(await ssotBdlProbe(env,"team_stats","ALL-STAR","team_stats",{seasons:[season],season_type:2,per_page:1}));
++  } else if (group === "goat") {

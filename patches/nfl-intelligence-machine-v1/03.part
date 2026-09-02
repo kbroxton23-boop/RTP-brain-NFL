@@ -1,0 +1,71 @@
++    const seed = await ssotBdlGenericPage(env,"games",{seasons:[season],season_type:2,per_page:1});
++    seedGameId = ssotInt(seed?.data?.[0]?.id);
++    rows.push(await ssotBdlProbe(env,"team_roster","GOAT","teams/1/roster",{season}));
++    rows.push(await ssotBdlProbe(env,"advanced_passing","GOAT","advanced_stats/passing",{season,season_type:2,week:0,per_page:1}));
++    rows.push(await ssotBdlProbe(env,"advanced_rushing","GOAT","advanced_stats/rushing",{season,season_type:2,week:0,per_page:1}));
++    rows.push(await ssotBdlProbe(env,"advanced_receiving","GOAT","advanced_stats/receiving",{season,season_type:2,week:0,per_page:1}));
++    if (seedGameId) rows.push(await ssotBdlProbe(env,"plays","GOAT","plays",{game_id:seedGameId,per_page:1}));
++    else rows.push({endpoint_key:"plays",required_tier:"GOAT",accessible:null,http_status:0,checked_at:new Date().toISOString(),sample_count:null,detail:"no_seed_game"});
++  } else if (group === "market") {
++    const seed = await ssotBdlGenericPage(env,"games",{seasons:[season],season_type:2,per_page:1});
++    seedGameId = ssotInt(seed?.data?.[0]?.id);
++    rows.push(await ssotBdlProbe(env,"odds","GOAT","odds",{season,week:1,season_type:2,per_page:1}));
++    if (seedGameId) rows.push(await ssotBdlProbe(env,"player_props","GOAT","odds/player_props",{game_id:seedGameId,prop_type:"passing_yards"}));
++    else rows.push({endpoint_key:"player_props",required_tier:"GOAT",accessible:null,http_status:0,checked_at:new Date().toISOString(),sample_count:null,detail:"no_seed_game"});
++  } else {
++    throw new Error("ssot_invalid_capability_group");
++  }
++  await ssotPersistCapabilities(env, rows);
++  return { group, season, seed_game_id: seedGameId, endpoints: rows, build: BUILD, model_math_mutated: false };
++}
++function ssotPlayerName(player) {
++  return [ssotText(player?.first_name), ssotText(player?.last_name)].filter(Boolean).join(" ") || null;
++}
++function ssotNormalizePlayer(player, observedAt) {
++  const playerId = ssotInt(player?.id);
++  if (!playerId) throw new Error("ssot_player_missing_id");
++  const team = player?.team || {};
++  return {
++    player_id: playerId, first_name: ssotText(player?.first_name), last_name: ssotText(player?.last_name),
++    player_name: ssotPlayerName(player), position: ssotText(player?.position), position_abbreviation: ssotText(player?.position_abbreviation),
++    height: ssotText(player?.height), weight: ssotText(player?.weight), jersey_number: ssotText(player?.jersey_number),
++    college: ssotText(player?.college), experience: ssotText(player?.experience), age: ssotInt(player?.age),
++    current_team_id: ssotInt(team?.id), current_team_abbr: ssotText(team?.abbreviation)?.toUpperCase() || null,
++    source: NFL_SSOT_PROVIDER, observed_at: observedAt, ingested_at: observedAt, schema_version: NFL_SSOT_SCHEMA_VERSION, build: BUILD
++  };
++}
++function ssotNormalizePlayerStat(stat, seasonType, observedAt) {
++  const player = stat?.player || {}, team = stat?.team || {}, game = stat?.game || {};
++  const playerId = ssotInt(player?.id), gameId = ssotInt(game?.id);
++  if (!playerId || !gameId) throw new Error("ssot_player_stat_missing_identity");
++  const season = ssotSeason(game?.season ?? stat?.season);
++  return {
++    game_id:`bdl:${gameId}`, bdl_game_id:gameId, season, week:ssotInt(game?.week ?? stat?.week), season_type:seasonType,
++    player_id:playerId, team_id:ssotInt(team?.id), team_abbr:ssotText(team?.abbreviation)?.toUpperCase() || null,
++    player_name:ssotPlayerName(player), position_abbreviation:ssotText(player?.position_abbreviation),
++    passing_attempts:ssotInt(stat?.passing_attempts ?? stat?.pass_attempts), passing_completions:ssotInt(stat?.passing_completions ?? stat?.completions),
++    passing_yards:ssotNum(stat?.passing_yards), passing_touchdowns:ssotInt(stat?.passing_touchdowns ?? stat?.passing_tds),
++    interceptions:ssotInt(stat?.interceptions ?? stat?.interceptions_thrown),
++    rushing_attempts:ssotInt(stat?.rushing_attempts ?? stat?.rush_attempts), rushing_yards:ssotNum(stat?.rushing_yards),
++    rushing_touchdowns:ssotInt(stat?.rushing_touchdowns ?? stat?.rushing_tds),
++    targets:ssotInt(stat?.receiving_targets ?? stat?.targets), receptions:ssotInt(stat?.receptions),
++    receiving_yards:ssotNum(stat?.receiving_yards), receiving_touchdowns:ssotInt(stat?.receiving_touchdowns ?? stat?.receiving_tds),
++    fumbles_lost:ssotInt(stat?.fumbles_lost), total_points:ssotNum(stat?.total_points),
++    stats_json:JSON.stringify(stat), source:NFL_SSOT_PROVIDER, observed_at:observedAt, ingested_at:observedAt,
++    schema_version:NFL_SSOT_SCHEMA_VERSION, build:BUILD,
++    player:ssotNormalizePlayer(player,observedAt)
++  };
++}
++function ssotNormalizePlay(play, gameMeta, observedAt) {
++  const playId = ssotText(play?.id);
++  const game = play?.game || {};
++  const bdlGameId = ssotInt(game?.id ?? gameMeta?.bdl_game_id);
++  if (!playId || !bdlGameId) throw new Error("ssot_play_missing_identity");
++  const team = play?.team || {};
++  return {
++    play_id:playId, game_id:`bdl:${bdlGameId}`, bdl_game_id:bdlGameId,
++    season:ssotSeason(game?.season ?? gameMeta?.season), week:ssotInt(game?.week ?? gameMeta?.week), season_type:ssotSeasonType(gameMeta?.season_type ?? (game?.postseason ? 3 : 2)),
++    period:ssotInt(play?.period?.number ?? play?.period), clock:ssotText(play?.clock?.display_value ?? play?.clock),
++    play_type:ssotText(play?.type?.text ?? play?.type), text:ssotText(play?.text), short_text:ssotText(play?.short_text),
++    scoring_play:play?.scoring_play === true ? 1 : 0, team_id:ssotInt(team?.id), team_abbr:ssotText(team?.abbreviation)?.toUpperCase() || null,
++    start_down:ssotInt(play?.start_down), start_distance:ssotInt(play?.start_distance), start_yards_to_endzone:ssotInt(play?.start_yards_to_endzone),

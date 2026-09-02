@@ -1,0 +1,33 @@
+diff --git a/brain-elite-v8.js b/brain-elite-v8.js
+index 36c0482..a32bb4a 100644
+--- a/brain-elite-v8.js
++++ b/brain-elite-v8.js
+@@ -9890,20 +9890,22 @@ async function ssotBdlCapabilities(req, env, url) {
+     rows.push(await ssotBdlProbe(env,"player_stats","ALL-STAR","stats",{seasons:[season],season_type:2,per_page:1}));
+     rows.push(await ssotBdlProbe(env,"team_stats","ALL-STAR","team_stats",{seasons:[season],season_type:2,per_page:1}));
+   } else if (group === "goat") {
+-    const seed = await ssotBdlGenericPage(env,"games",{seasons:[season],season_type:2,per_page:1});
+-    seedGameId = ssotInt(seed?.data?.[0]?.id);
++    // Rate-limit safe: reuse factual game identity already stored in D1 instead of
++    // spending an extra BDL request just to discover a seed game.
++    const seed = env?.NFL_DB ? await env.NFL_DB.prepare("SELECT bdl_game_id FROM nfl_games WHERE season=? ORDER BY kickoff_at LIMIT 1").bind(season).first() : null;
++    seedGameId = ssotInt(seed?.bdl_game_id);
+     rows.push(await ssotBdlProbe(env,"team_roster","GOAT","teams/1/roster",{season}));
+     rows.push(await ssotBdlProbe(env,"advanced_passing","GOAT","advanced_stats/passing",{season,season_type:2,week:0,per_page:1}));
+     rows.push(await ssotBdlProbe(env,"advanced_rushing","GOAT","advanced_stats/rushing",{season,season_type:2,week:0,per_page:1}));
+     rows.push(await ssotBdlProbe(env,"advanced_receiving","GOAT","advanced_stats/receiving",{season,season_type:2,week:0,per_page:1}));
+     if (seedGameId) rows.push(await ssotBdlProbe(env,"plays","GOAT","plays",{game_id:seedGameId,per_page:1}));
+-    else rows.push({endpoint_key:"plays",required_tier:"GOAT",accessible:null,http_status:0,checked_at:new Date().toISOString(),sample_count:null,detail:"no_seed_game"});
++    else rows.push({endpoint_key:"plays",required_tier:"GOAT",accessible:null,http_status:0,checked_at:new Date().toISOString(),sample_count:null,detail:"no_seed_game_in_ssot"});
+   } else if (group === "market") {
+-    const seed = await ssotBdlGenericPage(env,"games",{seasons:[season],season_type:2,per_page:1});
+-    seedGameId = ssotInt(seed?.data?.[0]?.id);
++    const seed = env?.NFL_DB ? await env.NFL_DB.prepare("SELECT bdl_game_id FROM nfl_games WHERE season=? ORDER BY kickoff_at LIMIT 1").bind(season).first() : null;
++    seedGameId = ssotInt(seed?.bdl_game_id);
+     rows.push(await ssotBdlProbe(env,"odds","GOAT","odds",{season,week:1,season_type:2,per_page:1}));
+     if (seedGameId) rows.push(await ssotBdlProbe(env,"player_props","GOAT","odds/player_props",{game_id:seedGameId,prop_type:"passing_yards"}));
+-    else rows.push({endpoint_key:"player_props",required_tier:"GOAT",accessible:null,http_status:0,checked_at:new Date().toISOString(),sample_count:null,detail:"no_seed_game"});
++    else rows.push({endpoint_key:"player_props",required_tier:"GOAT",accessible:null,http_status:0,checked_at:new Date().toISOString(),sample_count:null,detail:"no_seed_game_in_ssot"});
+   } else {
+     throw new Error("ssot_invalid_capability_group");
+   }

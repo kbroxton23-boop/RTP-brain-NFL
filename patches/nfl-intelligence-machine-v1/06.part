@@ -1,0 +1,62 @@
++  let complete=false, stoppedReason=null, endpoint=null, scope=null, baseParams={};
++  let gameMeta = null, family = null, week = ssotInt(body?.week,0);
++
++  if (phase === "player_stats") { endpoint="stats"; baseParams={seasons:[season],season_type:seasonType,per_page:100}; }
++  else if (phase === "injuries") { endpoint="player_injuries"; baseParams={per_page:100}; scope="current"; }
++  else if (phase === "plays") {
++    const gameId=ssotInt(body?.game_id); if(!gameId) throw new Error("ssot_plays_missing_game_id");
++    gameMeta=await env.NFL_DB.prepare("SELECT bdl_game_id,season,week,season_type FROM nfl_games WHERE bdl_game_id=?").bind(gameId).first();
++    if (!gameMeta) gameMeta={bdl_game_id:gameId,season,week:ssotInt(body?.week),season_type:seasonType};
++    endpoint="plays"; baseParams={game_id:gameId,per_page:100}; scope=`game=${gameId}`;
++  } else if (phase.startsWith("advanced_")) {
++    family=phase.replace("advanced_","");
++    endpoint=`advanced_stats/${family}`; baseParams={season,season_type:seasonType,week,per_page:100}; scope=`week=${week}`;
++  } else throw new Error("ssot_intelligence_unknown_phase");
++
++  while (ssotCanContinue(budget)) {
++    try {
++      const page=await ssotBdlGenericPage(env,endpoint,{...baseParams,cursor});
++      budget.calls+=1; budget.pages+=1; budget.rows+=page.data.length;
++      const archive=await ssotArchiveScopedPage(env,phase,season,seasonType,scope,cursor,page.raw_text);
++      const observedAt=new Date().toISOString();
++      let normalized;
++      if (phase==="player_stats") normalized=page.data.map(x=>ssotNormalizePlayerStat(x,seasonType,observedAt));
++      else if (phase==="injuries") normalized=page.data.map(x=>ssotNormalizeInjury(x,observedAt));
++      else if (phase==="plays") normalized=page.data.map(x=>ssotNormalizePlay(x,gameMeta,observedAt));
++      else normalized=page.data.map(x=>ssotNormalizeAdvanced(x,family,season,seasonType,week,observedAt));
++      const stored=await ssotUpsertIntelligenceRows(env,phase,normalized,archive);
++      await ssotWriteReceipt(env,{run_id:runId,phase,season,season_type:seasonType,page_cursor:cursor,next_cursor:page.next_cursor,source_row_count:page.data.length,stored_row_count:stored,payload_hash:archive.payload_hash,raw_r2_key:archive.raw_r2_key,created_at:observedAt});
++      processedPages+=1; fetchedRows+=page.data.length; storedRows+=stored; cursor=page.next_cursor??null;
++      if(cursor===null){complete=true;break;}
++    } catch(e){errors+=1;stoppedReason=`ssot_page_error:${String(e?.message||e)}`;break;}
++  }
++  if(!complete&&!stoppedReason) stoppedReason="ssot_budget_checkpoint";
++  const updated=new Date().toISOString();
++  await ssotSaveRun(env,{run_id:runId,phase,season,season_type:seasonType,status:complete?"complete":errors?"error":"checkpointed",cursor,processed_pages:processedPages,fetched_rows:fetchedRows,stored_rows:storedRows,error_count:errors,started_at:startedAt,updated_at:updated,completed_at:complete?updated:null,checkpoint:{stopped_reason:stoppedReason,next_cursor:cursor,scope}});
++  return {run_id:runId,phase,season,season_type:seasonType,processed_pages:processedPages,fetched_rows:fetchedRows,stored_rows:storedRows,errors,complete,stopped_reason:stoppedReason,next_cursor:cursor,continuation_allowed:!complete&&errors===0,scope,budget:{budget_ms:budget.budget_ms,call_budget:budget.call_budget,max_pages:budget.max_pages,max_rows:budget.max_rows,calls_used:budget.calls,pages_used:budget.pages,rows_used:budget.rows,elapsed_ms:Date.now()-budget.started_ms}};
++}
++async function ssotIngestRoster(env, body) {
++  ssotRequireBindings(env,true);
++  const season=ssotSeason(body?.season), teamId=ssotInt(body?.team_id);
++  if(!teamId) throw new Error("ssot_roster_missing_team_id");
++  const page=await ssotBdlGenericPage(env,`teams/${teamId}/roster`,{season});
++  const archive=await ssotArchiveScopedPage(env,"roster",season,2,`team=${teamId}`,null,page.raw_text);
++  const observedAt=new Date().toISOString();
++  let stored=0;
++  for(const row of page.data){
++    const p=ssotNormalizePlayer(row?.player||{},observedAt);
++    if(!p.current_team_id) p.current_team_id=teamId;
++    await ssotUpsertPlayerRow(env,p,archive);
++    const rosterPosition=ssotText(row?.position ?? row?.player?.position_abbreviation,"UNK");
++    const hash=await ssotSha256(row);
++    await env.NFL_DB.prepare(`INSERT INTO nfl_rosters (season,team_id,team_abbr,player_id,roster_position,depth,player_name,injury_status,observed_at,ingested_at,payload_hash,raw_r2_key,schema_version,build)
++      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
++      ON CONFLICT(season,team_id,player_id,roster_position) DO UPDATE SET team_abbr=excluded.team_abbr,depth=excluded.depth,player_name=excluded.player_name,injury_status=excluded.injury_status,observed_at=excluded.observed_at,ingested_at=excluded.ingested_at,payload_hash=excluded.payload_hash,raw_r2_key=excluded.raw_r2_key,schema_version=excluded.schema_version,build=excluded.build`)
++      .bind(season,teamId,p.current_team_abbr,p.player_id,rosterPosition,ssotInt(row?.depth),ssotText(row?.player_name,p.player_name),ssotText(row?.injury_status),observedAt,observedAt,hash,archive.raw_r2_key,NFL_SSOT_SCHEMA_VERSION,BUILD).run();
++    stored+=1;
++  }
++  return {season,team_id:teamId,source_rows:page.data.length,stored_rows:stored,raw_r2_key:archive.raw_r2_key,payload_hash:archive.payload_hash,complete:true};
++}
++async function ssotCertifyPlayerStats(env, season, seasonType) {
++  season=ssotSeason(season); seasonType=ssotSeasonType(seasonType);
++  const fg=await env.NFL_DB.prepare("SELECT COUNT(*) n FROM nfl_games WHERE season=? AND season_type=? AND status_state='final'").bind(season,seasonType).first();

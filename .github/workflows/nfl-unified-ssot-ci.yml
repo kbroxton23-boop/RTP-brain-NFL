@@ -1,14 +1,18 @@
-name: NFL Unified SSOT CI
+name: NFL Intelligence Machine CI
 on:
   push:
     branches:
       - repair/unified-brain-v8-ssot-v1
+      - feature/nfl-intelligence-machine-v1
   pull_request:
     paths:
       - brain-elite-v8.js
       - patches/**
       - tests/**
       - migrations/**
+      - docs/**
+      - README-UNIFIED-SSOT.md
+      - README-INTELLIGENCE-v1.md
       - .github/workflows/nfl-unified-ssot-ci.yml
 jobs:
   build-and-verify:
@@ -18,26 +22,53 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Reassemble unified SSOT candidate patch
+
+      - name: Reassemble unified SSOT base patch
         run: |
           cat patches/unified-brain-v8-ssot-v1/*.part > /tmp/unified-brain-v8-ssot-v1.patch
           echo "08b0114ef3facf1d22232a6a4288d65a0ac52b01c2471b463929e3d3946e9740  /tmp/unified-brain-v8-ssot-v1.patch" | sha256sum -c -
-      - name: Apply unified SSOT candidate patch
+      - name: Apply unified SSOT base patch
         run: git apply --check /tmp/unified-brain-v8-ssot-v1.patch && git apply /tmp/unified-brain-v8-ssot-v1.patch
-      - name: Syntax check unified Worker
+
+      - name: Reassemble NFL Intelligence v1 patch
+        run: |
+          cat patches/nfl-intelligence-machine-v1/*.part > /tmp/nfl-intelligence-machine-v1.patch
+          echo "0e46a20a6b7bc72061ac3d407a9ae542374546c794368c2a350cb4948c4628a4  /tmp/nfl-intelligence-machine-v1.patch" | sha256sum -c -
+      - name: Apply NFL Intelligence v1 patch
+        run: git apply --check /tmp/nfl-intelligence-machine-v1.patch && git apply /tmp/nfl-intelligence-machine-v1.patch
+
+      - name: Reassemble capability safety patch
+        run: |
+          cat patches/nfl-intelligence-capability-safety-v1/*.part > /tmp/nfl-intelligence-capability-safety-v1.patch
+          echo "67f6c0ed5c2a495833b1602d75a7555d87d089fc25c91a2dbbbd798079a1317f  /tmp/nfl-intelligence-capability-safety-v1.patch" | sha256sum -c -
+      - name: Apply capability safety patch
+        run: git apply --check /tmp/nfl-intelligence-capability-safety-v1.patch && git apply /tmp/nfl-intelligence-capability-safety-v1.patch
+
+      - name: Verify exact candidate Worker hash
+        run: echo "3b6be97686d326349e0acd0862af1cf26ca01a47ebb1bfa32f09a26f992a88e9  brain-elite-v8.js" | sha256sum -c -
+      - name: Syntax check candidate Worker
         run: node --check brain-elite-v8.js
-      - name: Run regression and SSOT contracts
+      - name: Run regression, SSOT, and intelligence contracts
         run: node --test tests/*.test.mjs
-      - name: Validate D1 migration
-        run: "sqlite3 ':memory:' < migrations/0001_nfl_ssot.sql"
+      - name: Validate D1 migrations sequentially
+        run: |
+          rm -f /tmp/nfl-ssot-ci.db
+          sqlite3 /tmp/nfl-ssot-ci.db < migrations/0001_nfl_ssot.sql
+          sqlite3 /tmp/nfl-ssot-ci.db < migrations/0002_nfl_intelligence_ssot.sql
+
       - name: Build deploy artifact
         run: |
-          mkdir -p dist
-          cp brain-elite-v8.js dist/NFL_Brain_v8_Unified_SSOT_v1.js
+          mkdir -p dist/docs
+          cp brain-elite-v8.js dist/NFL_Brain_v8_Intelligence_SSOT_v1.js
           cp migrations/0001_nfl_ssot.sql dist/0001_nfl_ssot.sql
+          cp migrations/0002_nfl_intelligence_ssot.sql dist/0002_nfl_intelligence_ssot.sql
           cp README-UNIFIED-SSOT.md dist/README-UNIFIED-SSOT.md
+          cp README-INTELLIGENCE-v1.md dist/README-INTELLIGENCE-v1.md
+          cp docs/NFL_INTELLIGENCE_MATRIX.md dist/docs/NFL_INTELLIGENCE_MATRIX.md
+          cp docs/AGENT_BUILD_BRIEF.md dist/docs/AGENT_BUILD_BRIEF.md
+          sha256sum dist/NFL_Brain_v8_Intelligence_SSOT_v1.js > dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: RTP-NFL-Unified-Brain-v8-SSOT-v1
+          name: RTP-NFL-Intelligence-Machine-v1
           path: dist/
           if-no-files-found: error
